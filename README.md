@@ -27,7 +27,7 @@ python -m janswer [global options] <command> ...
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--db` | `janswer.db` | Path to the SQLite database file |
+| `--db` | `j-answer.db` | Path to the SQLite database file |
 | `--delay` | `1.5` | Seconds to wait between HTTP requests (where the command loops over many pages) |
 
 Place `--db` and `--delay` **before** the subcommand name.
@@ -37,7 +37,7 @@ Place `--db` and `--delay` **before** the subcommand name.
 #### `game` — one game by `game_id`
 
 ```bash
-python -m janswer --db janswer.db game 1
+python -m janswer game 1
 ```
 
 #### `season` — every game linked from a season page
@@ -45,8 +45,8 @@ python -m janswer --db janswer.db game 1
 Season numbers match J-Archive (e.g. [Season 1](https://j-archive.com/showseason.php?season=1)). Use `--limit` only if you want a subset; `0` or omitting it means **all** games on that season’s page.
 
 ```bash
-python -m janswer --db janswer.db --delay 2 season 1
-python -m janswer --db janswer.db --delay 2 season 1 --limit 5
+python -m janswer --delay 2 season 1
+python -m janswer --delay 2 season 1 --limit 5
 ```
 
 #### `crawl` — resumable full-archive queue
@@ -54,9 +54,9 @@ python -m janswer --db janswer.db --delay 2 season 1 --limit 5
 Global options must come **before** `crawl`:
 
 ```bash
-python -m janswer --db janswer.db --delay 2 crawl discover
-python -m janswer --db janswer.db --delay 2 crawl run
-python -m janswer --db janswer.db crawl status
+python -m janswer --delay 2 crawl discover
+python -m janswer --delay 2 crawl run
+python -m janswer crawl status
 ```
 
 - **`crawl discover`** — reads `listseasons.php` and each season listing; registers `game_id`s in the DB (safe to re-run; does not wipe completed rows).
@@ -67,12 +67,12 @@ python -m janswer --db janswer.db crawl status
 
 ## Example: entire first season (Season 1)
 
-This pulls **all** games listed on the Season 1 archive page into `janswer.db`, with a 2-second pause between game requests to reduce load on the server.
+This pulls **all** games listed on the Season 1 archive page into `j-answer.db`, with a 2-second pause between game requests to reduce load on the server.
 
 ```bash
 cd /path/to/janswer
 pip install -r requirements.txt
-python -m janswer --db janswer.db --delay 2 season 1
+python -m janswer --delay 2 season 1
 ```
 
 You will see one line per game (`game_id`, clues inserted/skipped) and a final summary. Re-running the same command is safe: duplicate clues are skipped via unique `jarchive_clue_id` keys.
@@ -82,7 +82,7 @@ On Windows (PowerShell), the same invocation works if `python` is on your `PATH`
 ```powershell
 cd C:\path\to\janswer
 pip install -r requirements.txt
-python -m janswer --db janswer.db --delay 2 season 1
+python -m janswer --delay 2 season 1
 ```
 
 ## Database
