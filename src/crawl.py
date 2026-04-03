@@ -9,9 +9,9 @@ from typing import Callable
 import requests
 import sqlite3
 
-from janswer.db import insert_clues
-from janswer.parser import parse_game_html
-from janswer.scraper import (
+from src.db import insert_clues
+from src.parser import parse_game_html
+from src.scraper import (
     fetch_game_html,
     fetch_listseasons_html,
     fetch_season_html,

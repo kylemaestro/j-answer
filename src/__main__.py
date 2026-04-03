@@ -5,16 +5,36 @@ from __future__ import annotations
 import argparse
 import sys
 
-from janswer.crawl import discover, print_status, run as crawl_run
-from janswer.db import connect, init_schema, insert_clues
-from janswer.parser import parse_game_html
-from janswer.scraper import (
+from src.crawl import discover, print_status, run as crawl_run
+from src.db import connect, init_schema, insert_clues
+from src.parser import parse_game_html
+from src.scraper import (
     DEFAULT_DELAY_S,
     fetch_game_html,
     fetch_season_html,
     parse_game_ids_from_season_page,
     polite_delay,
 )
+
+CRAWL_BANNER = """       ░▒▓█▓▒░▒▓████████▓▒░▒▓██████▓▒░░▒▓███████▓▒░ ░▒▓██████▓▒░░▒▓███████▓▒░░▒▓███████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
+       ░▒▓█▓▒░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
+       ░▒▓█▓▒░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
+       ░▒▓█▓▒░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░░▒▓████████▓▒░▒▓███████▓▒░░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░   ░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░     ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░  ░▒▓█▓▒░
+ ░▒▓██████▓▒░░▒▓████████▓▒░▒▓██████▓▒░░▒▓█▓▒░      ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░▒▓███████▓▒░   ░▒▓█▓▒░   ░▒▓█▓▒░"""
+ANSI_HEX_2596BE = "\033[38;2;37;150;190m"
+ANSI_RESET = "\033[0m"
+
+
+def print_crawl_banner() -> None:
+    colored_banner = f"{ANSI_HEX_2596BE}{CRAWL_BANNER}{ANSI_RESET}\n"
+    try:
+        print(colored_banner, end="")
+    except UnicodeEncodeError:
+        # Windows terminals may default to cp1252; write UTF-8 bytes directly.
+        sys.stdout.buffer.write(colored_banner.encode("utf-8"))
+        sys.stdout.flush()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -123,6 +143,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "crawl":
         if args.crawl_cmd == "discover":
+            print_crawl_banner()
             n_seasons, added = discover(
                 conn,
                 args.delay,
@@ -131,6 +152,7 @@ def main(argv: list[str] | None = None) -> int:
             print(f"discover: season_pages={n_seasons} new_rows_added={added}")
             return 0
         if args.crawl_cmd == "run":
+            print_crawl_banner()
             crawl_run(
                 conn,
                 args.delay,

@@ -95,6 +95,8 @@ python -m janswer --delay 2 season 1
 
 ```
 janswer/
+  __main__.py    # Launcher so `python -m janswer` works
+src/
   __init__.py
   __main__.py    # CLI entry
   crawl.py       # Resumable crawl + ETA
@@ -103,3 +105,8 @@ janswer/
   scraper.py     # HTTP helpers
 requirements.txt
 ```
+
+## Notes
+
+- `python -m janswer` runs the `janswer` module launcher, which delegates to the CLI implementation in `src/__main__.py`.
+  This keeps imports stable and avoids path issues from running a file directly.
