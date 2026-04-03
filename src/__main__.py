@@ -69,7 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Resumable full-archive crawl (discover seasons, then run queue)",
         epilog=(
             "Global options like --db and --delay go before `crawl`, e.g. "
-            "`python -m janswer --delay 2 crawl run` "
+            "`python -m janswer crawl run` "
             "or `python -m janswer --db custom.db crawl status`."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
