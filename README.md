@@ -1,4 +1,4 @@
-# janswer
+# j-answer
 
 "Don't put your future in Jeopardy!"
 
