@@ -19,7 +19,11 @@ from janswer.scraper import (
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="Scrape j-archive.com into SQLite.")
-    p.add_argument("--db", default="janswer.db", help="SQLite database path")
+    p.add_argument(
+        "--db",
+        default="j-answer.db",
+        help="SQLite database path (default: j-answer.db)",
+    )
     p.add_argument(
         "--delay",
         type=float,
@@ -44,8 +48,9 @@ def main(argv: list[str] | None = None) -> int:
         "crawl",
         help="Resumable full-archive crawl (discover seasons, then run queue)",
         epilog=(
-            "Global options --db and --delay go before `crawl`, e.g. "
-            "`python -m janswer --db data.db --delay 2 crawl run`."
+            "Global options like --db and --delay go before `crawl`, e.g. "
+            "`python -m janswer --delay 2 crawl run` "
+            "or `python -m janswer --db custom.db crawl status`."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
