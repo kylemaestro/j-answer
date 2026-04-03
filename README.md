@@ -1,8 +1,6 @@
 # janswer
 
-Python tooling to scrape [J! Archive](https://j-archive.com) game pages into a local SQLite database (clues, answers, categories, values, air dates, Daily Doubles, etc.). The scraper is separate from any future web UI.
-
-> **Terms:** J-Archive prohibits scraping, republication, and commercial use. Use this only for personal, local study; keep request rates low and respect the site.
+"Don't put your future in Jeopardy!"
 
 ## Requirements
 
