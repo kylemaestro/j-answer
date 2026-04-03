@@ -5,7 +5,8 @@
 ## Requirements
 
 - Python 3.10+
-- Network access to `j-archive.com`
+- Network access to `j-archive.com` (for scraping only)
+- **Phase 2 (flashcard UI):** Node.js 20+ and npm (or another package manager compatible with Vite)
 
 ## Install
 
@@ -25,10 +26,12 @@ python -m janswer [global options] <command> ...
 
 ### Global options
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--db` | `j-answer.db` | Path to the SQLite database file |
-| `--delay` | `1.5` | Seconds to wait between HTTP requests (where the command loops over many pages) |
+
+| Option    | Default       | Description                                                                     |
+| --------- | ------------- | ------------------------------------------------------------------------------- |
+| `--db`    | `j-answer.db` | Path to the SQLite database file                                                |
+| `--delay` | `1.5`         | Seconds to wait between HTTP requests (where the command loops over many pages) |
+
 
 Place `--db` and `--delay` **before** the subcommand name.
 
@@ -59,9 +62,9 @@ python -m janswer --delay 2 crawl run
 python -m janswer crawl status
 ```
 
-- **`crawl discover`** — reads `listseasons.php` and each season listing; registers `game_id`s in the DB (safe to re-run; does not wipe completed rows).
-- **`crawl run`** — scrapes `pending` and `failed` games, one commit per game (resumable after interrupt or errors). Optional: `--max-games`, `--http-retries`, `--backoff-base`.
-- **`crawl status`** — queue counts and last discover time.
+- `**crawl discover**` — reads `listseasons.php` and each season listing; registers `game_id`s in the DB (safe to re-run; does not wipe completed rows).
+- `**crawl run**` — scrapes `pending` and `failed` games, one commit per game (resumable after interrupt or errors). Optional: `--max-games`, `--http-retries`, `--backoff-base`.
+- `**crawl status**` — queue counts and last discover time.
 
 ---
 
@@ -91,6 +94,26 @@ python -m janswer --delay 2 season 1
 - Full-text search lives in the `clues_fts` FTS5 table (kept in sync with `clues` via triggers).
 - The crawl queue uses the `crawl_games` table (after schema v2).
 
+## Phase 2: Flashcard web UI
+
+The UI lives in `web/` (Vite + React + Tailwind). It reads clues from SQLite through a small FastAPI app in `src/api_app.py`.
+
+1. **Populate the database** (see the scraper commands above) so `j-answer.db` exists at the repo root, or set `**JANSWER_DB`** to the full path of your SQLite file.
+2. **Start the API** (from the repository root):
+  ```bash
+   python -m uvicorn src.api_app:app --reload --host 127.0.0.1 --port 8000
+  ```
+3. **Start the frontend** (separate terminal):
+  ```bash
+   cd web
+   npm install
+   npm run dev
+  ```
+   Open the URL Vite prints (usually `http://127.0.0.1:5173`). The dev server proxies `/api/*` to the API on port 8000.
+4. Use **I’m feeling lucky** to load a random clue, **tap or click the card** to flip (answer on the back). On desktop, the card tilts slightly with the pointer (Balatro-style parallax).
+
+**Production build:** `cd web && npm run build` then serve `web/dist/` with any static host. You still need the API reachable at the same origin or configure the static host to proxy `/api` to Uvicorn.
+
 ## Project layout
 
 ```
@@ -99,14 +122,17 @@ janswer/
 src/
   __init__.py
   __main__.py    # CLI entry
+  api_app.py     # FastAPI: random clue for the web UI
   crawl.py       # Resumable crawl + ETA
   db.py          # SQLite + FTS
   parser.py      # HTML → clue rows
   scraper.py     # HTTP helpers
+web/             # React flashcard app (Phase 2)
 requirements.txt
 ```
 
 ## Notes
 
 - `python -m janswer` runs the `janswer` module launcher, which delegates to the CLI implementation in `src/__main__.py`.
-  This keeps imports stable and avoids path issues from running a file directly.
+This keeps imports stable and avoids path issues from running a file directly.
+
