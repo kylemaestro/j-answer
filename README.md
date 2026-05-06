@@ -2,7 +2,7 @@
 
 “Don’t put your future in Jeopardy!”
 
-Scrape [J-Archive](https://j-archive.com) into SQLite, with an optional web UI for random flashcards.
+Scrape [J-Archive](https://j-archive.com) into SQLite, with an optional web UI for random flashcards and multi-tag full-text search.
 
 ## Requirements
 
@@ -198,7 +198,15 @@ python -m uvicorn src.api_app:app --reload --host 127.0.0.1 --port 8000
 python -m uvicorn src.api_app:app --host 0.0.0.0 --port 8000
 ```
 
-Endpoints used by the UI: `GET /api/random-clue`, `GET /api/health`. CORS is restricted to local dev origins; for a public deployment, tighten or extend CORS in `src/api_app.py` and serve the SPA and API under a reverse proxy (same origin or explicit proxy rules).
+Endpoints used by the UI:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `GET` | `/api/health` | Liveness check |
+| `GET` | `/api/random-clue` | One random clue |
+| `GET` | `/api/search?tag=a&tag=b` | Full-text search; repeat `tag` for each term (AND across clue text, answer, and in-game category). Optional `limit` (1–500, default 100). |
+
+CORS is restricted to local dev origins; for a public deployment, tighten or extend CORS in `src/api_app.py` and serve the SPA and API under a reverse proxy (same origin or explicit proxy rules).
 
 ### Frontend
 
@@ -224,8 +232,26 @@ Static output is in `web/dist/`. Serve it with any static file host and **revers
 
 ### Using the UI
 
-- **I’m feeling lucky** — fetches a random clue from the database.
-- **Click or tap the card** — flips between clue and answer (keyboard: Enter / Space when focused).
+- **Search** — type a word or phrase, press Enter or **Add tag**; each tag appears as a removable badge. All tags apply together (**AND**) via SQLite FTS5 over clue text, correct response, and category. Tap a result row to open that clue on the card.
+- **I’m feeling lucky** — loads a random clue from the database.
+- **Card** — click or tap to flip between clue and answer (keyboard: Enter / Space when focused).
+
+---
+
+## Roadmap
+
+End goal: a web-based, Quizlet-style experience over the full J-Archive-derived corpus, with strong search, AI-assisted taxonomy, and analytics.
+
+| Phase | Scope | Direction |
+| ----- | ----- | --------- |
+| **1** | Data acquisition & schema | SQLite store, scraper, FTS5 on clue / answer / category — **done** |
+| **2** | Core flashcard UI | Random clue, flip animation, Jeopardy-style presentation — **done** |
+| **3** | Search & filtering | Multi-tag AND search, result list → card; FTS-backed — **done** for MVP (pagination, highlights, round/date filters later) |
+| **4** | AI categorization | Batch LLM pass to fill `ai_category` / `ai_subcategory` from a controlled taxonomy; storage and re-runs |
+| **5** | Smarter search | Semantic or embedding-backed search so intent (e.g. “first U.S. presidents”) matches clues without literal phrase overlap |
+| **6** | Statistics & taxonomy UI | Hierarchy by AI categories, counts per node, “study this bucket” random sessions |
+
+Principles: iterate in phases; keep scraping and persistence separate from the UI; call out J-Archive rate limits and HTML quirks early; keep interactions snappy and mobile-friendly.
 
 ---
 
@@ -243,6 +269,7 @@ src/
   db.py
   parser.py
   scraper.py
+  search.py         # FTS5 multi-tag search helpers
 web/                # Vite + React flashcard SPA
 requirements.txt
 ```

@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { Flashcard } from "./components/Flashcard";
+import { SearchPanel } from "./components/SearchPanel";
 import type { RandomClue } from "./types";
 
 async function fetchRandomClue(): Promise<RandomClue> {
@@ -39,13 +40,13 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen flex-col bg-[#030f7d]">
-      <header className="flex flex-col items-center gap-2 px-4 pb-4 pt-10 text-center sm:pt-14">
+      <header className="flex flex-col items-center gap-2 px-4 pb-2 pt-10 text-center sm:pt-14">
         <h1 className="text-2xl font-black uppercase tracking-tight text-clue sm:text-3xl">
           j-answer
         </h1>
         <p className="max-w-md text-sm text-clue opacity-90">
-          Jeopardy flashcards from your archive — random clue, flip for the
-          response.
+          Jeopardy flashcards from your archive — search with tags, or draw a
+          random clue and flip for the answer.
         </p>
         <button
           type="button"
@@ -65,12 +66,15 @@ export default function App() {
         ) : null}
       </header>
 
-      <main className="flex flex-1 flex-col items-center justify-center px-4 pb-16 pt-4">
+      <SearchPanel onSelectClue={setClue} />
+
+      <main className="flex flex-1 flex-col items-center justify-center px-4 pb-16 pt-2">
         {clue ? <Flashcard clue={clue} /> : null}
         {!clue && !loading && !error ? (
           <p className="max-w-sm text-center text-sm text-clue opacity-80">
-            Press <strong className="text-white">I&apos;m feeling lucky</strong>{" "}
-            to pull a random clue from your database.
+            Use <strong className="text-white">search tags</strong> or{" "}
+            <strong className="text-white">I&apos;m feeling lucky</strong> to
+            load a clue.
           </p>
         ) : null}
       </main>

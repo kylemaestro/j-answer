@@ -1,4 +1,4 @@
-"""Minimal HTTP API for the flashcard UI (Phase 2)."""
+"""HTTP API for the flashcard UI and search."""
 
 from __future__ import annotations
 
@@ -6,10 +6,11 @@ import os
 import sqlite3
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.db import connect
+from src.search import normalize_tags, row_to_clue_dict, search_clues_by_tags
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB = _REPO_ROOT / "j-answer.db"
@@ -81,21 +82,52 @@ def random_clue() -> dict:
             detail="No clues in the database yet. Scrape some games first.",
         )
 
-    air = row["air_date"]
-    year = None
-    if air and len(air) >= 4 and air[:4].isdigit():
-        year = int(air[:4])
+    return row_to_clue_dict(row)
+
+
+@app.get("/api/search")
+def search_clues(
+    tag: list[str] | None = Query(
+        None,
+        description="Repeat `tag=` for each term. All terms must match (AND) in clue text, answer, or category.",
+    ),
+    limit: int = Query(100, ge=1, le=500),
+) -> dict:
+    """
+    Full-text search using SQLite FTS5 (`clues_fts`).
+    Multiple `tag` query params are combined with AND (e.g. authors + french + women).
+    """
+    path = _db_path()
+    if not Path(path).is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database file not found at {path!r}. Run the scraper first or set JANSWER_DB.",
+        )
+
+    raw_tags = tag or []
+    norm = normalize_tags(raw_tags)
+    if not norm:
+        return {"tags": [], "count": 0, "clues": []}
+
+    conn = connect(path)
+    try:
+        rows = search_clues_by_tags(conn, norm, limit=limit)
+    except sqlite3.OperationalError as e:
+        msg = str(e).lower()
+        if "fts" in msg or "malformed" in msg or "syntax" in msg:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Search could not be parsed: {e}",
+            ) from e
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database error: {e}",
+        ) from e
+    finally:
+        conn.close()
 
     return {
-        "id": row["id"],
-        "jarchive_game_id": row["jarchive_game_id"],
-        "air_date": air,
-        "year": year,
-        "round": row["round"],
-        "game_category": row["game_category"],
-        "value_display": row["value_display"],
-        "value_amount": row["value_amount"],
-        "is_daily_double": bool(row["is_daily_double"]),
-        "clue_text": row["clue_text"],
-        "answer_text": row["answer_text"],
+        "tags": norm,
+        "count": len(rows),
+        "clues": [row_to_clue_dict(r) for r in rows],
     }
