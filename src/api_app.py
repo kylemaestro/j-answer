@@ -20,15 +20,28 @@ def _db_path() -> str:
     return os.environ.get("JANSWER_DB", str(_DEFAULT_DB))
 
 
-app = FastAPI(title="j-answer API", version="0.1.0")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+def _cors_origins() -> list[str]:
+    """Local dev defaults plus optional CORS_ORIGINS (comma-separated) for production."""
+    base = [
         "http://127.0.0.1:5173",
         "http://localhost:5173",
         "http://127.0.0.1:4173",
         "http://localhost:4173",
-    ],
+    ]
+    extra = os.environ.get("CORS_ORIGINS", "").strip()
+    if not extra:
+        return base
+    for part in extra.split(","):
+        o = part.strip()
+        if o and o not in base:
+            base.append(o)
+    return base
+
+
+app = FastAPI(title="j-answer API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

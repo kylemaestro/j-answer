@@ -1,0 +1,72 @@
+# Deploy built frontend + Python app to a single EC2 host over SSH.
+#
+# Required GitHub repository secrets:
+#   DEPLOY_HOST       — public IP or DNS (e.g. Elastic IP)
+#   DEPLOY_USER       — e.g. ec2-user (AL2023)
+#   DEPLOY_SSH_KEY    — full private PEM (ed25519 or RSA) for key auth; store only deploy key on server
+#
+# First-time server: follow README "Deployment and Infrastructure" (venv, systemd, nginx, TLS).
+
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build frontend
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: Prepare SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Rsync app + static site
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          rsync -avz --delete \
+            -e "ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
+            ./janswer/ ./src/ ./requirements.txt \
+            "${USER}@${HOST}:/opt/j-answer/app/"
+          rsync -avz --delete \
+            -e "ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
+            ./web/dist/ \
+            "${USER}@${HOST}:/opt/j-answer/web/dist/"
+
+      - name: Install deps and restart API
+        env:
+          HOST: ${{ secrets.DEPLOY_HOST }}
+          USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          ssh -i "$HOME/.ssh/deploy_key" -o StrictHostKeyChecking=accept-new \
+            "${USER}@${HOST}" << 'REMOTE'
+          set -euo pipefail
+          cd /opt/j-answer/app
+          test -d venv || python3 -m venv venv
+          ./venv/bin/pip install --upgrade pip
+          ./venv/bin/pip install -r requirements.txt
+          sudo systemctl restart janswer-api || echo "WARN: janswer-api not installed yet — see README"
+          REMOTE

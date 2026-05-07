@@ -1,0 +1,140 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Minimal single EC2 instance for j-answer (nginx + FastAPI + SQLite).
+  Uses default VPC. For production hardening, restrict SSH (port 22) or disable
+  it and use AWS Systems Manager Session Manager after bootstrap.
+
+Parameters:
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+    Description: ARM (t4g.*) or use t3.micro for x86 free-tier eligible in some accounts.
+
+  KeyName:
+    Type: String
+    Default: ""
+    Description: Optional EC2 Key Pair name for SSH (empty = no key; use SSM Session Manager).
+
+  AllowSSHFromInternet:
+    Type: String
+    Default: "true"
+    AllowedValues: ["true", "false"]
+    Description: >
+      If true, security group allows SSH (22) from 0.0.0.0/0 for GitHub Actions / home setup.
+      Set false after switching to SSM-only or a VPN; then manage deploy another way.
+
+  LatestAmiId:
+    Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
+    Description: SSM parameter for Amazon Linux 2023 AMI (arm64). For t3.micro use the x86_64 path in console or override.
+
+Conditions:
+  UseKeyPair: !Not [!Equals [!Ref KeyName, ""]]
+  OpenSSH: !Equals [!Ref AllowSSHFromInternet, "true"]
+
+Resources:
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Tags:
+        - Key: Project
+          Value: j-answer
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: j-answer web + optional SSH
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP (redirect to HTTPS after certbot)
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+          Description: All outbound
+      Tags:
+        - Key: Project
+          Value: j-answer
+
+  SSHIngressOptional:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: OpenSSH
+    Properties:
+      GroupId: !Ref AppSecurityGroup
+      IpProtocol: tcp
+      FromPort: 22
+      ToPort: 22
+      CidrIp: 0.0.0.0/0
+      Description: SSH for bootstrap / GitHub Actions (restrict in production)
+
+  ElasticIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Project
+          Value: j-answer
+
+  AppInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref LatestAmiId
+      KeyName: !If [UseKeyPair, !Ref KeyName, !Ref "AWS::NoValue"]
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !Ref AppSecurityGroup
+      Tags:
+        - Key: Name
+          Value: j-answer-app
+        - Key: Project
+          Value: j-answer
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -euo pipefail
+          dnf update -y
+          dnf install -y nginx python3 python3-pip python3-venv git
+          mkdir -p /opt/j-answer/{app,data,web}
+          chown -R ec2-user:ec2-user /opt/j-answer
+          systemctl enable --now nginx
+          echo "Bootstrap done. Deploy app + TLS via README (certbot, systemd, rsync)."
+
+  EIPAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      InstanceId: !Ref AppInstance
+      AllocationId: !GetAtt ElasticIP.AllocationId
+
+Outputs:
+  PublicIp:
+    Description: Elastic IP — point Route53 A record (j-answer.example.com) here
+    Value: !Ref ElasticIP
+  InstanceId:
+    Description: EC2 instance ID (for SSM / debugging)
+    Value: !Ref AppInstance
+  SshHint:
+    Description: SSH (if key + SG allow)
+    Value: !Sub "ssh -i your.pem ec2-user@${ElasticIP}"

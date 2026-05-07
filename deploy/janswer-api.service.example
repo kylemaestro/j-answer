@@ -1,0 +1,22 @@
+# Install: sudo cp deploy/janswer-api.service.example /etc/systemd/system/janswer-api.service
+# sudo systemctl daemon-reload && sudo systemctl enable --now janswer-api
+#
+# Adjust User/Group and paths if needed.
+
+[Unit]
+Description=j-answer FastAPI (uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/opt/j-answer/app
+Environment=JANSWER_DB=/opt/j-answer/data/j-answer.db
+Environment=CORS_ORIGINS=https://j-answer.kylemeister.dev
+ExecStart=/opt/j-answer/app/venv/bin/python -m uvicorn src.api_app:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
