@@ -14,12 +14,9 @@ from src.db import connect
 from src.search import normalize_tags, row_to_clue_dict, search_clues_by_tags
 from src.semantic_search import (
     count_embedded_clues,
-    embeddings_table_exists,
-    magic_min_score,
+    embeddings_status_details,
     search_clues_by_vibe,
-    vec_index_ready,
 )
-from src.vec_index import count_vec_index
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB = _REPO_ROOT / "j-answer.db"
@@ -175,21 +172,9 @@ def embeddings_status() -> dict:
         )
     conn = connect(path)
     try:
-        if not embeddings_table_exists(conn):
-            embedded = 0
-            indexed = 0
-        else:
-            embedded = count_embedded_clues(conn)
-            indexed = count_vec_index(conn)
-        magic_available = embedded > 0 and vec_index_ready(conn)
+        return embeddings_status_details(conn)
     finally:
         conn.close()
-    return {
-        "embedded": embedded,
-        "vec_indexed": indexed,
-        "magic_available": magic_available,
-        "min_score": magic_min_score(),
-    }
 
 
 @app.get("/api/search/magic")

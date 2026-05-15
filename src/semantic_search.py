@@ -12,16 +12,21 @@ import openai
 from src.embeddings import EMBEDDING_DIMENSIONS, EMBEDDING_MODEL
 from src.search import row_to_clue_dict
 from src.vec_index import (
+    VEC_INDEX_VERSION,
     VEC_TABLE,
     count_vec_index,
     load_sqlite_vec,
+    read_vec_index_version,
+    vec_index_needs_rebuild,
     vec_index_table_exists,
 )
 
 DEFAULT_MIN_SCORE = 0.45
 # Fetch extra neighbors so min_score filtering still returns enough hits.
 KNN_OVERSAMPLE = 5
-KNN_OVERSAMPLE_CAP = 500
+KNN_OVERSAMPLE_CAP = 200
+
+_openai_client: openai.OpenAI | None = None
 
 _CLUE_SELECT = """
     c.id,
@@ -71,7 +76,32 @@ def count_embedded_clues(conn: sqlite3.Connection) -> int:
 
 
 def vec_index_ready(conn: sqlite3.Connection) -> bool:
-    return vec_index_table_exists(conn) and count_vec_index(conn) > 0
+    return not vec_index_needs_rebuild(conn)
+
+
+def embeddings_status_details(conn: sqlite3.Connection) -> dict[str, object]:
+    """Diagnostics for /api/embeddings/status."""
+    embedded = count_embedded_clues(conn)
+    indexed = count_vec_index(conn) if vec_index_table_exists(conn) else 0
+    stored_version = read_vec_index_version(conn)
+    needs_rebuild = vec_index_needs_rebuild(conn)
+    sqlite_vec_version: str | None = None
+    if embedded > 0:
+        try:
+            sqlite_vec_version = load_sqlite_vec(conn)
+        except Exception:
+            pass
+    return {
+        "embedded": embedded,
+        "vec_indexed": indexed,
+        "vec_index_version": stored_version,
+        "vec_index_expected_version": VEC_INDEX_VERSION,
+        "needs_vec_rebuild": needs_rebuild,
+        "sqlite_vec_version": sqlite_vec_version,
+        "search_backend": "vec0_ann" if not needs_rebuild else "none",
+        "magic_available": embedded > 0 and not needs_rebuild,
+        "min_score": magic_min_score(),
+    }
 
 
 def _distance_to_score(distance: float) -> float:
@@ -109,6 +139,13 @@ def _search_vec_knn(
     return hits
 
 
+def _openai_client() -> openai.OpenAI:
+    global _openai_client
+    if _openai_client is None:
+        _openai_client = openai.OpenAI()
+    return _openai_client
+
+
 def embed_query(text: str) -> np.ndarray:
     if not os.environ.get("OPENAI_API_KEY"):
         raise RuntimeError(
@@ -117,7 +154,7 @@ def embed_query(text: str) -> np.ndarray:
     q = text.strip()
     if not q:
         raise ValueError("Query must not be empty.")
-    client = openai.OpenAI()
+    client = _openai_client()
     response = client.embeddings.create(
         model=EMBEDDING_MODEL,
         input=q,

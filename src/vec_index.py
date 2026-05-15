@@ -12,12 +12,13 @@ from src.embeddings import EMBEDDING_BYTES, EMBEDDING_DIMENSIONS, blob_to_embedd
 
 VEC_TABLE = "clue_vec_index"
 META_VEC_INDEX_VERSION = "vec_index_version"
-VEC_INDEX_VERSION = "1"
+VEC_INDEX_VERSION = "2"
 
 _VEC0_DDL = f"""
 CREATE VIRTUAL TABLE {VEC_TABLE} USING vec0(
     clue_id INTEGER PRIMARY KEY,
     embedding FLOAT[{EMBEDDING_DIMENSIONS}] distance_metric=cosine
+    indexed by flat()
 );
 """
 
@@ -30,11 +31,28 @@ END;
 """
 
 
-def load_sqlite_vec(conn: sqlite3.Connection) -> None:
-    """Load the sqlite-vec extension into an open connection."""
+def load_sqlite_vec(conn: sqlite3.Connection) -> str:
+    """Load the sqlite-vec extension. Returns vec_version()."""
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
+    return conn.execute("SELECT vec_version()").fetchone()[0]
+
+
+def read_vec_index_version(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?",
+        (META_VEC_INDEX_VERSION,),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def vec_index_needs_rebuild(conn: sqlite3.Connection) -> bool:
+    """True when the vec table is missing, empty, or built with an older schema."""
+    if not vec_index_table_exists(conn) or count_vec_index(conn) == 0:
+        return True
+    stored = read_vec_index_version(conn)
+    return stored != VEC_INDEX_VERSION
 
 
 def vec_index_table_exists(conn: sqlite3.Connection) -> bool:
@@ -72,11 +90,13 @@ def _ensure_meta(conn: sqlite3.Connection) -> None:
 
 
 def ensure_vec_index(conn: sqlite3.Connection) -> None:
-    """Create the vec0 table and delete-sync trigger if missing."""
+    """Create the vec0 ANN table and delete-sync trigger if missing."""
     _ensure_meta(conn)
     if vec_index_table_exists(conn):
-        conn.execute(_DELETE_VEC_TRIGGER)
-        return
+        if not vec_index_needs_rebuild(conn):
+            conn.execute(_DELETE_VEC_TRIGGER)
+            return
+        drop_vec_index(conn)
     conn.execute(_VEC0_DDL)
     conn.execute(_DELETE_VEC_TRIGGER)
     conn.execute(
