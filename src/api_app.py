@@ -103,13 +103,19 @@ def random_clue() -> dict:
 def search_clues(
     tag: Optional[List[str]] = Query(
         None,
-        description="Repeat `tag=` for each term. All terms must match (AND) in clue text, answer, or category.",
+        description=(
+            "Repeat `tag=` for each term (AND). Default: match clue, answer, or category. "
+            "Prefix to narrow: `answer:`, `clue:`, `category:`, or `year:` (four digits, e.g. year:2019)."
+        ),
     ),
     limit: int = Query(100, ge=1, le=500),
 ) -> dict:
     """
-    Full-text search using SQLite FTS5 (`clues_fts`).
-    Multiple `tag` query params are combined with AND (e.g. authors + french + women).
+    Full-text search using SQLite FTS5 (`clues_fts`) plus optional year filter on `air_date`.
+
+    Field filters: ``answer:mallard`` (answer only), ``clue:...``, ``category:...``,
+    ``year:2020`` (broadcast year). Unprefixed tags still match any indexed column.
+    Multiple `tag` query params are combined with AND.
     """
     path = _db_path()
     if not Path(path).is_file():
@@ -126,6 +132,8 @@ def search_clues(
     conn = connect(path)
     try:
         rows = search_clues_by_tags(conn, norm, limit=limit)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
     except sqlite3.OperationalError as e:
         msg = str(e).lower()
         if "fts" in msg or "malformed" in msg or "syntax" in msg:

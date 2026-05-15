@@ -6,3 +6,6 @@ venv/
 env/
 node_modules/
 web/dist/
+
+# Local-only parameterized EC2 lab template (not committed)
+personal-kylemeister-apps-ec2.yaml

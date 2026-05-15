@@ -165,6 +165,8 @@ python3 -m venv venv
 '
 ```
 
+**Python on AL2023:** The default **`python3`** on Amazon Linux 2023 is often **3.9**. FastAPI/Pydantic **evaluate** route parameter annotations at import time; syntax like **`list[str] | None`** (PEP 604) needs **3.10+** and will crash the service on 3.9. This repo’s **`src/api_app.py`** uses **`typing.Optional`** / **`List`** / **`Dict`** for those hints so Uvicorn starts cleanly on stock AL2023. If you prefer **3.11+** on the host, install it from the repos, recreate **`venv`** with that interpreter, and point **`ExecStart`** in the systemd unit at the matching **`python`** binary.
+
 ### 4.2 Frontend build on the server + publishing `web/dist`
 
 nginx serves files from **`/opt/j-answer/web/dist`**, while the Vite project lives in **`/opt/j-answer/app/web/`**. Build on the instance, then copy the build output:
@@ -233,7 +235,7 @@ Pick one approach:
    Then from **PowerShell** (use the **matching private** key; adjust path):
 
    ```powershell
-   scp -i $env:USERPROFILE\.ssh\id_ed25519 .\j-answer.db ec2-user@54.163.87.182:/opt/j-answer/data/j-answer.db
+   scp -i $env:USERPROFILE\.ssh\id_ed25519 .\j-answer.db ec2-user@YOUR_HOST:/opt/j-answer/data/j-answer.db
    ```
 
 2. **[EC2 Instance Connect](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-methods.html#ec2-instance-connect-connecting-aws-cli)**  

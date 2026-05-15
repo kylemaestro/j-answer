@@ -8,7 +8,8 @@ Scrape [J-Archive](https://j-archive.com) into SQLite, with an optional web UI f
 
 | Component | Requirement |
 | --------- | ----------- |
-| Scraper / API | Python 3.10+ |
+| Scraper / CLI | Python 3.10+ |
+| API (e.g. stock Amazon Linux 2023 on EC2) | Python 3.9+ (`python3`); use 3.10+ locally if you prefer |
 | Scraping | Network access to `j-archive.com` |
 | Web UI | Node.js 20+ and npm (or any toolchain that can run Vite 6) |
 

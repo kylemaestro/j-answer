@@ -2,8 +2,21 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any
+
+# User-facing `answer:` / `clue:` / `category:` map to FTS5 column names.
+_PREFIX_TO_FTS_COLUMN = {
+    "answer": "answer_text",
+    "clue": "clue_text",
+    "category": "game_category",
+}
+
+_TAG_PREFIX_RE = re.compile(
+    r"^(?P<kind>answer|clue|category|year)\s*:\s*(?P<rest>.*)$",
+    re.IGNORECASE,
+)
 
 
 def normalize_tags(raw: list[str]) -> list[str]:
@@ -22,16 +35,61 @@ def normalize_tags(raw: list[str]) -> list[str]:
     return out
 
 
-def fts_and_match_expression(tags: list[str]) -> str:
+def _quote_fts_phrase(phrase: str) -> str:
+    """Single FTS5 phrase token (double-quoted), with quotes escaped."""
+    escaped = phrase.replace('"', '""')
+    return f'"{escaped}"'
+
+
+def _classify_tag(tag: str) -> tuple[str, Any]:
     """
-    Build an FTS5 MATCH string: each tag is a phrase (quoted); combined with AND.
-    All terms must match somewhere in the indexed row (clue_text, answer_text, game_category).
+    Classify one tag for building the query.
+
+    Returns:
+      ("global", phrase) — match phrase in any FTS column (unchanged behavior).
+      ("column", (fts_column, phrase)) — match phrase only in that FTS column.
+      ("year", yyyy) — filter on clue air_date year (not in FTS).
     """
-    parts: list[str] = []
+    m = _TAG_PREFIX_RE.match(tag.strip())
+    if not m:
+        return ("global", tag)
+    kind = m.group("kind").casefold()
+    rest = (m.group("rest") or "").strip()
+    if not rest:
+        raise ValueError(f"Add text or a year after '{kind}:' (empty field filter).")
+    if kind == "year":
+        if not re.fullmatch(r"\d{4}", rest):
+            raise ValueError(
+                "Year filters must be exactly four digits, e.g. year:2019 — "
+                f"got {rest!r}."
+            )
+        return ("year", rest)
+    col = _PREFIX_TO_FTS_COLUMN[kind]
+    return ("column", (col, rest))
+
+
+def _fts_match_and_years(tags: list[str]) -> tuple[str | None, list[str]]:
+    """
+    Build FTS MATCH string (or None if only year filters) and a list of year strings
+    (AND). Raises ValueError for invalid field filters.
+    """
+    fts_parts: list[str] = []
+    years: list[str] = []
+    seen_year: set[str] = set()
     for tag in tags:
-        escaped = tag.replace('"', '""')
-        parts.append(f'"{escaped}"')
-    return " AND ".join(parts)
+        mode, payload = _classify_tag(tag)
+        if mode == "global":
+            fts_parts.append(_quote_fts_phrase(payload))
+        elif mode == "year":
+            y = payload
+            if y not in seen_year:
+                seen_year.add(y)
+                years.append(y)
+        else:
+            col, phrase = payload
+            fts_parts.append(f"{col} : {_quote_fts_phrase(phrase)}")
+    match_expr = " AND ".join(fts_parts) if fts_parts else None
+    return match_expr, years
 
 
 def search_clues_by_tags(
@@ -41,34 +99,67 @@ def search_clues_by_tags(
     limit: int = 100,
 ) -> list[sqlite3.Row]:
     """
-    Return clue rows matching all tags (AND) against FTS5 clue/answer/category columns.
+    Return clue rows matching all tags (AND).
+
+    Tags without a prefix match any FTS column (clue, answer, category), as before.
+    Use ``answer:term``, ``clue:term``, or ``category:term`` to restrict a term to
+    that field. Use ``year:YYYY`` to restrict to clues from that broadcast year
+    (from ``air_date``).
     """
     tags = normalize_tags(tags)
     if not tags:
         return []
 
-    match_expr = fts_and_match_expression(tags)
-    cur = conn.execute(
-        """
-        SELECT DISTINCT
-          c.id,
-          c.jarchive_game_id,
-          c.air_date,
-          c.round,
-          c.game_category,
-          c.value_display,
-          c.value_amount,
-          c.is_daily_double,
-          c.clue_text,
-          c.answer_text
-        FROM clues AS c
-        INNER JOIN clues_fts ON clues_fts.rowid = c.id
-        WHERE clues_fts MATCH ?
-        ORDER BY c.air_date DESC, c.id DESC
-        LIMIT ?
-        """,
-        (match_expr, limit),
-    )
+    match_expr, years = _fts_match_and_years(tags)
+    year_sql = ""
+    if years:
+        year_sql = " AND " + " AND ".join(
+            ["substr(c.air_date, 1, 4) = ?"] * len(years)
+        )
+
+    if match_expr is not None:
+        cur = conn.execute(
+            f"""
+            SELECT DISTINCT
+              c.id,
+              c.jarchive_game_id,
+              c.air_date,
+              c.round,
+              c.game_category,
+              c.value_display,
+              c.value_amount,
+              c.is_daily_double,
+              c.clue_text,
+              c.answer_text
+            FROM clues AS c
+            INNER JOIN clues_fts ON clues_fts.rowid = c.id
+            WHERE clues_fts MATCH ?{year_sql}
+            ORDER BY c.air_date DESC, c.id DESC
+            LIMIT ?
+            """,
+            (match_expr, *years, limit),
+        )
+    else:
+        cur = conn.execute(
+            f"""
+            SELECT DISTINCT
+              c.id,
+              c.jarchive_game_id,
+              c.air_date,
+              c.round,
+              c.game_category,
+              c.value_display,
+              c.value_amount,
+              c.is_daily_double,
+              c.clue_text,
+              c.answer_text
+            FROM clues AS c
+            WHERE 1=1{year_sql}
+            ORDER BY c.air_date DESC, c.id DESC
+            LIMIT ?
+            """,
+            (*years, limit),
+        )
     return cur.fetchall()
 
 

@@ -98,8 +98,8 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
           type="search"
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Add a word or phrase, then Enter…"
-          className="min-h-11 flex-1 rounded-xl border border-white/25 bg-white/10 px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
+          placeholder='e.g. birds, answer:mallard, year:2019 — Enter to add'
+          className="min-h-11 flex-1 rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
           autoComplete="off"
         />
         <button
@@ -138,8 +138,12 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
         </div>
       ) : (
         <p className="mt-2 text-center text-xs text-white/55 text-clue">
-          Tags combine with <strong className="text-white/90">AND</strong> across
-          clue, answer, and category.
+          Tags use <strong className="text-white/90">AND</strong>. Plain words match
+          clue, answer, or category. Narrow with{" "}
+          <strong className="text-white/90">answer:</strong>,{" "}
+          <strong className="text-white/90">clue:</strong>,{" "}
+          <strong className="text-white/90">category:</strong>, or{" "}
+          <strong className="text-white/90">year:YYYY</strong>.
         </p>
       )}
 
