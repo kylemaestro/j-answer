@@ -139,13 +139,17 @@ A common cause on **AL2023 ARM** is an old template line **`python3-venv`** fail
 **Install the app:** `git` should already be installed from UserData (or `sudo dnf install -y git`). Replace the URL with **your** fork or upstream repo (**HTTPS** is simplest for a public repo):
 
 ```bash
-# Must be empty (remove leftovers if you experimented earlier):
+# Directory must be empty — git refuses otherwise. If you created `venv` here
+# before cloning, or see: "destination path ... already exists and is not an empty directory",
+# this rm removes that too (venv is not in git; you will recreate it after clone).
 sudo rm -rf /opt/j-answer/app
 sudo mkdir -p /opt/j-answer/app
 sudo chown ec2-user:ec2-user /opt/j-answer/app
 
 sudo -u ec2-user git clone https://github.com/YOUR_ACCOUNT/j-answer.git /opt/j-answer/app
 ```
+
+After a successful clone, run the **Python venv** block below again so **`venv`** lives **inside** the cloned tree.
 
 **Private GitHub repo:** use a **personal access token** (HTTPS) or configure **SSH keys** for `ec2-user` and clone `git@github.com:YOUR_ACCOUNT/j-answer.git`. Do not commit tokens into the template; paste the clone URL only in the Session Manager shell.
 
@@ -202,20 +206,47 @@ sudo systemctl restart janswer-api
 
 If **`janswer-api`** is not installed yet, skip the **`systemctl restart`** until §4.6.
 
-**Optional — laptop build + `scp`:** If you prefer to build on Windows where **`node -v`** is already 20+, run **`npm run build`** locally, then upload:  
-`scp -r web/dist/* ec2-user@YOUR_HOST:/opt/j-answer/web/dist/`  
-(PowerShell path to `scp` is fine; replace **`YOUR_HOST`** with the Elastic IP or DNS.)
+**Optional — laptop build + `scp`:** If you prefer to build on Windows where **`node -v`** is already 20+, run **`npm run build`** locally, then upload with **`scp`** — **only if SSH key auth works** for `ec2-user` (same requirement as **`ssh`**, see §4.3). Example:  
+`scp -r web/dist/* ec2-user@YOUR_HOST:/opt/j-answer/web/dist/`
 
 ### 4.3 SQLite database
 
-Place the database on the server (first time or refresh):
+Place the database on the server (first time or refresh).
 
-```bash
-# Example from laptop:
-scp ./j-answer.db ec2-user@HOST:/opt/j-answer/data/j-answer.db
+**Copy from your PC with `scp` (needs SSH keys):** `scp` uses the same SSH connection as **`ssh`**. If the instance was created **without** an EC2 **key pair** (`KeyName` empty in CloudFormation), **`ec2-user`** has **no** entry in **`~/.ssh/authorized_keys`**, so **`scp`** and **`ssh`** fail with **`Permission denied (publickey, …)`**.
+
+Pick one approach:
+
+1. **Install your laptop’s public key over Session Manager (simplest)**  
+   On your PC, show your **public** key (create a key with **`ssh-keygen`** if you do not have one):  
+   `Get-Content $env:USERPROFILE\.ssh\id_ed25519.pub`  
+   In **Session Manager** (as a user that can **`sudo`**):
+
+   ```bash
+   sudo mkdir -p /home/ec2-user/.ssh
+   sudo chmod 700 /home/ec2-user/.ssh
+   echo 'ssh-ed25519 AAAA...your-public-key... comment' | sudo tee -a /home/ec2-user/.ssh/authorized_keys
+   sudo chmod 600 /home/ec2-user/.ssh/authorized_keys
+   sudo chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+   ```
+
+   Then from **PowerShell** (use the **matching private** key; adjust path):
+
+   ```powershell
+   scp -i $env:USERPROFILE\.ssh\id_ed25519 .\j-answer.db ec2-user@54.163.87.182:/opt/j-answer/data/j-answer.db
+   ```
+
+2. **[EC2 Instance Connect](https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/ec2-instance-connect-methods.html#ec2-instance-connect-connecting-aws-cli)**  
+   Push an ephemeral public key with the AWS CLI (**`send-ssh-public-key`**), then run **`scp`** within **60 seconds** using the same private key. You need the instance **ID** and **Availability Zone**.
+
+3. **No SSH at all**  
+   Upload the file to **S3** from your PC (`aws s3 cp`), then on the instance **`aws s3 cp`** into **`/opt/j-answer/data/`** (the instance role must allow that object; the default j-answer stack does **not** include S3 permissions, so you would extend IAM or use a pre-signed URL).
+
+Example once SSH + key work:
+
+```powershell
+scp -i $env:USERPROFILE\.ssh\id_ed25519 .\j-answer.db ec2-user@YOUR_HOST:/opt/j-answer/data/j-answer.db
 ```
-
-Path **`/opt/j-answer/data/j-answer.db`** matches the systemd example. The API reads **`JANSWER_DB`** (see `deploy/janswer-api.service.example`).
 
 **Updating the `.db` later:** Stop the API (optional but avoids rare locks), overwrite the file, fix ownership if needed, start the API:
 
@@ -269,6 +300,56 @@ Check:
 ```bash
 curl -sS http://127.0.0.1:8000/api/health
 ```
+
+#### Troubleshooting: `502 Bad Gateway` from nginx on `/api/...`
+
+nginx returns **502** when the **upstream** (`127.0.0.1:8000`) is **down**, **rejects the connection**, or **closes** before a valid HTTP response. On the instance, narrow it down:
+
+1. **Is Uvicorn running?**
+
+   ```bash
+   sudo systemctl status janswer-api --no-pager
+   sudo journalctl -u janswer-api -n 80 --no-pager
+   ```
+
+   If **inactive** or **failed**, fix errors in the log (wrong **`ExecStart`** path, missing **`venv`**, import errors, etc.), then **`sudo systemctl restart janswer-api`**.
+
+2. **Bypass nginx** — if this fails, the API is the problem, not nginx:
+
+   ```bash
+   curl -v http://127.0.0.1:8000/api/health
+   curl -v http://127.0.0.1:8000/api/random-clue
+   ```
+
+   **`Connection refused`** → nothing is listening on **8000** (service not running or wrong **`--host` / `--port`**).
+
+3. **SELinux (Amazon Linux 2023)** — nginx may be blocked from connecting to the backend:
+
+   ```bash
+   getenforce
+   sudo tail -n 30 /var/log/nginx/error.log
+   ```
+
+   If the log mentions **Permission denied** connecting to upstream, try (persists across reboots):
+
+   ```bash
+   sudo setsebool -P httpd_can_network_connect 1
+   sudo systemctl restart nginx
+   ```
+
+4. **Database readable by `ec2-user`** — the unit runs as **`ec2-user`**. If **`j-answer.db`** is owned by **`root`** with mode **600**, SQLite can fail at runtime:
+
+   ```bash
+   ls -la /opt/j-answer/data/j-answer.db
+   sudo chown ec2-user:ec2-user /opt/j-answer/data/j-answer.db
+   sudo systemctl restart janswer-api
+   ```
+
+5. **HTTPS server block after Certbot** — ensure the **`listen 443 ssl`** server has the same **`location /api/`** **`proxy_pass`** as port **80**. Inspect effective config:
+
+   ```bash
+   sudo nginx -T 2>/dev/null | grep -A2 "location /api"
+   ```
 
 ---
 

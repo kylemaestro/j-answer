@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from pathlib import Path
+from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,7 +21,7 @@ def _db_path() -> str:
     return os.environ.get("JANSWER_DB", str(_DEFAULT_DB))
 
 
-def _cors_origins() -> list[str]:
+def _cors_origins() -> List[str]:
     """Local dev defaults plus optional CORS_ORIGINS (comma-separated) for production."""
     base = [
         "http://127.0.0.1:5173",
@@ -49,7 +50,7 @@ app.add_middleware(
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
+def health() -> Dict[str, str]:
     return {"status": "ok"}
 
 
@@ -100,7 +101,7 @@ def random_clue() -> dict:
 
 @app.get("/api/search")
 def search_clues(
-    tag: list[str] | None = Query(
+    tag: Optional[List[str]] = Query(
         None,
         description="Repeat `tag=` for each term. All terms must match (AND) in clue text, answer, or category.",
     ),
