@@ -217,7 +217,11 @@ The script is **resumable**: only clues missing from `clue_embeddings` are proce
 - **Storage:** `text-embedding-3-small`, **512** dimensions, raw **float32** little-endian bytes (~2 KB per clue). Details: `src/embeddings.py`.
 - **Scale:** a full archive is on the order of **~1 GB** of vectors plus OpenAI token charges; use `--limit` to validate first.
 
-Semantic search in the API/UI is not wired up yet; embeddings are the persistence layer for a future phase (cosine similarity, score thresholds, FTS hybrid).
+The web UI **Magic** mode calls `/api/search/magic` (cosine similarity + score threshold). **Exact** mode keeps FTS tag search unchanged.
+
+**Search-time API usage:** Clue vectors are computed once by `vector-embed.py` and stored on disk. Each Magic search still calls OpenAI **once** to embed the user’s query (same model/dims), then runs local cosine similarity over stored BLOBs. Query embedding is cheap per request compared to indexing the full corpus.
+
+**Future enhancement:** Run **query** embedding locally (e.g. on-device model) so Magic search needs no OpenAI call after the batch job—likely paired with re-embedding clues using the same local model so vectors stay in one space.
 
 ---
 
@@ -236,10 +240,36 @@ The `web/` app is a Vite + React + Tailwind SPA. It loads random clues from SQLi
 | Variable | Purpose |
 | -------- | ------- |
 | `JANSWER_DB` | Optional. Absolute or relative path to the SQLite file. If unset, the API uses `j-answer.db` in the **repository root** (same default as the CLI). |
+| `OPENAI_API_KEY` | Required for **Magic** search on the **API process** (see below). Not read by the browser or Vite—only by Uvicorn/`src/semantic_search.py`. |
+| `JANSWER_MAGIC_MIN_SCORE` | Optional. Minimum cosine similarity for Magic results (default `0.32`). |
+
+Setting the key for the embed script (`vector-embed.py`) does **not** automatically apply to the API. Use the **same terminal session** (or set the variable in your IDE run configuration) **before** starting Uvicorn, then restart the API if it was already running.
+
+**Windows (PowerShell):**
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."   # your key
+python -m uvicorn src.api_app:app --reload --host 127.0.0.1 --port 8000
+```
+
+**macOS / Linux:**
+
+```bash
+export OPENAI_API_KEY="sk-..."
+python -m uvicorn src.api_app:app --reload --host 127.0.0.1 --port 8000
+```
+
+Quick check (from another terminal, API must be up):
+
+```bash
+curl "http://127.0.0.1:8000/api/search/magic?q=test"
+```
+
+If the key is missing you get `503` with `OPENAI_API_KEY is not set on the API server`. The app does not load a `.env` file automatically—use your shell or IDE env settings (or add dotenv later if you want).
 
 ### API server
 
-From the repository root:
+From the repository root (with `OPENAI_API_KEY` set in that environment if you use Magic search):
 
 **Development** (auto-reload on code changes):
 
@@ -259,7 +289,9 @@ Endpoints used by the UI:
 | ------ | ---- | ------- |
 | `GET` | `/api/health` | Liveness check |
 | `GET` | `/api/random-clue` | One random clue |
-| `GET` | `/api/search?tag=a&tag=b` | Full-text search; repeat `tag` for each term (AND across clue text, answer, and in-game category). Optional `limit` (1–500, default 100). |
+| `GET` | `/api/search?tag=a&tag=b` | **Exact** full-text search; repeat `tag` for each term (AND). Optional `limit` (1–500, default 100). |
+| `GET` | `/api/search/magic?q=...` | **Magic** semantic search over clues in `clue_embeddings` only. Requires `OPENAI_API_KEY` on the API host. Optional `limit`, `min_score` (default `0.32` or `JANSWER_MAGIC_MIN_SCORE`). |
+| `GET` | `/api/embeddings/status` | Embedded clue count (Magic search pool size). |
 
 **CORS:** Local Vite origins are always allowed. For production hosting behind another hostname or split origins, set **`CORS_ORIGINS`** (comma-separated) in the API environment; same-origin nginx + `/api` proxy usually does not require changes. See **`docs/aws.md`** if you deploy to AWS.
 
@@ -287,7 +319,7 @@ Static output is in `web/dist/`. For production, prefer **same-origin** nginx: s
 
 ### Using the UI
 
-- **Search** — type a word or phrase, press Enter or **Add tag**; each tag appears as a removable badge. All tags apply together (**AND**) via SQLite FTS5 over clue text, correct response, and category. Tap a result row to open that clue on the card.
+- **Search** — toggle **Exact** (tags + FTS5, same as before) or **Magic** (natural-language vibe search over embedded clues only). Magic requires embeddings in the DB and `OPENAI_API_KEY` when running the API. Tap a result row to open that clue on the card.
 - **I’m feeling lucky** — loads a random clue from the database.
 - **Card** — click or tap to flip between clue and answer (keyboard: Enter / Space when focused).
 
@@ -303,7 +335,7 @@ End goal: a web-based, Quizlet-style experience over the full J-Archive-derived 
 | **2** | Core flashcard UI | Random clue, flip animation, Jeopardy-style presentation — **done** |
 | **3** | Search & filtering | Multi-tag AND search, result list → card; FTS-backed — **done** for MVP (pagination, highlights, round/date filters later) |
 | **4** | AI categorization | Batch LLM pass to fill `ai_category` / `ai_subcategory` from a controlled taxonomy; storage and re-runs |
-| **5** | Smarter search | Semantic / embedding-backed search (vectors in `clue_embeddings`; batch job in `embed/`) — **storage in progress**; API search TBD |
+| **5** | Smarter search | Magic vibe search + `clue_embeddings` (batch embed in `embed/`); local query embedding (no search-time API); hybrid with FTS / tuning later |
 | **6** | Statistics & taxonomy UI | Hierarchy by AI categories, counts per node, “study this bucket” random sessions |
 
 Principles: iterate in phases; keep scraping and persistence separate from the UI; call out J-Archive rate limits and HTML quirks early; keep interactions snappy and mobile-friendly.
@@ -325,6 +357,7 @@ src/
   parser.py
   scraper.py
   search.py         # FTS5 multi-tag search helpers
+  semantic_search.py # Magic search (cosine similarity over clue_embeddings)
   embeddings.py     # clue_embeddings BLOB format + schema helpers
 embed/
   vector-embed.py   # local batch embed job (OpenAI)

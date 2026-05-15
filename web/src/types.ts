@@ -10,4 +10,6 @@ export type RandomClue = {
   is_daily_double: boolean;
   clue_text: string;
   answer_text: string;
+  /** Cosine similarity from Magic search (0–1), when present */
+  score?: number;
 };

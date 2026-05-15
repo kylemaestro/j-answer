@@ -12,6 +12,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from src.db import connect
 from src.search import normalize_tags, row_to_clue_dict, search_clues_by_tags
+from src.semantic_search import (
+    count_embedded_clues,
+    embeddings_table_exists,
+    magic_min_score,
+    search_clues_by_vibe,
+)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB = _REPO_ROOT / "j-answer.db"
@@ -149,7 +155,100 @@ def search_clues(
         conn.close()
 
     return {
+        "mode": "exact",
         "tags": norm,
         "count": len(rows),
         "clues": [row_to_clue_dict(r) for r in rows],
+    }
+
+
+@app.get("/api/embeddings/status")
+def embeddings_status() -> dict:
+    """How many clues have vectors (Magic search pool size)."""
+    path = _db_path()
+    if not Path(path).is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database file not found at {path!r}. Run the scraper first or set JANSWER_DB.",
+        )
+    conn = connect(path)
+    try:
+        if not embeddings_table_exists(conn):
+            embedded = 0
+        else:
+            embedded = count_embedded_clues(conn)
+    finally:
+        conn.close()
+    return {
+        "embedded": embedded,
+        "magic_available": embedded > 0,
+        "min_score": magic_min_score(),
+    }
+
+
+@app.get("/api/search/magic")
+def search_clues_magic(
+    q: str = Query(..., min_length=1, description="Natural-language vibe query"),
+    limit: int = Query(100, ge=1, le=500),
+    min_score: float | None = Query(
+        None,
+        ge=0.0,
+        le=1.0,
+        description="Minimum cosine similarity (default from JANSWER_MAGIC_MIN_SCORE or 0.32)",
+    ),
+) -> dict:
+    """
+    Semantic search over clues present in ``clue_embeddings`` only.
+    Requires ``OPENAI_API_KEY`` on the server to embed the query.
+    """
+    path = _db_path()
+    if not Path(path).is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database file not found at {path!r}. Run the scraper first or set JANSWER_DB.",
+        )
+
+    query = q.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Query must not be empty.")
+
+    conn = connect(path)
+    try:
+        embedded_pool = count_embedded_clues(conn)
+        if embedded_pool == 0:
+            return {
+                "mode": "magic",
+                "query": query,
+                "embedded_pool": 0,
+                "min_score": min_score if min_score is not None else magic_min_score(),
+                "count": 0,
+                "clues": [],
+            }
+        try:
+            hits = search_clues_by_vibe(
+                conn,
+                path,
+                query,
+                limit=limit,
+                min_score=min_score,
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except RuntimeError as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database error: {e}",
+        ) from e
+    finally:
+        conn.close()
+
+    return {
+        "mode": "magic",
+        "query": query,
+        "embedded_pool": embedded_pool,
+        "min_score": min_score if min_score is not None else magic_min_score(),
+        "count": len(hits),
+        "clues": [{**clue, "score": score} for clue, score in hits],
     }

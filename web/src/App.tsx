@@ -45,8 +45,8 @@ export default function App() {
           j-answer
         </h1>
         <p className="max-w-md text-sm text-clue opacity-90">
-          Jeopardy flashcards from your archive — search with tags, or draw a
-          random clue and flip for the answer.
+          Jeopardy flashcards from your archive — exact tag search or magic
+          vibe search, plus random clues.
         </p>
         <button
           type="button"
@@ -72,8 +72,8 @@ export default function App() {
         {clue ? <Flashcard clue={clue} /> : null}
         {!clue && !loading && !error ? (
           <p className="max-w-sm text-center text-sm text-clue opacity-80">
-            Use <strong className="text-white">search tags</strong> or{" "}
-            <strong className="text-white">I&apos;m feeling lucky</strong> to
+            Use <strong className="text-white">search</strong> (Exact or Magic)
+            or <strong className="text-white">I&apos;m feeling lucky</strong> to
             load a clue.
           </p>
         ) : null}
