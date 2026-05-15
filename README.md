@@ -164,7 +164,7 @@ python -m janswer season 1
 - **Schema** is created on first run (`init_schema` in `src/db.py`).
 - **Full-text search:** `clues_fts` (FTS5), kept in sync with `clues` via triggers.
 - **Crawl queue:** `crawl_games` (schema version 2).
-- **Semantic embeddings (optional):** `clue_embeddings` — one vector per clue for vibe / topic search (see below). Format contract lives in `src/embeddings.py`.
+- **Semantic embeddings (optional):** `clue_embeddings` (source BLOBs) plus `clue_vec_index` ([sqlite-vec](https://github.com/asg017/sqlite-vec) `vec0` KNN table) for Magic search. Format contract lives in `src/embeddings.py`.
 
 ---
 
@@ -175,8 +175,11 @@ For semantic “vibe” search (e.g. “US presidents”, “18th century Europe
 ### Setup
 
 ```bash
+pip install -r requirements.txt
 pip install -r embed/requirements-embed.txt
 ```
+
+(`sqlite-vec` is included in both; the API needs it for Magic search at runtime.)
 
 Set your API key (never commit it):
 
@@ -209,9 +212,25 @@ python embed/vector-embed.py --limit 100
 
 The script is **resumable**: only clues missing from `clue_embeddings` are processed. Progress logs use counts from the start of the run plus rows embedded this session (no full-table recount after every batch).
 
+### Build the vec index (required for Magic search)
+
+After embeddings exist (or when upgrading an older DB), build the sqlite-vec index **once per database** (stop the API first if it holds the file open):
+
+```bash
+python scripts/migrate_vec_index.py --db j-answer.db
+```
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `--db` | `j-answer.db` (repo root) | SQLite path |
+| `--batch-size` | `5000` | Rows per upsert batch |
+| `-v` | off | Debug logging |
+
+`vector-embed.py` updates `clue_vec_index` incrementally when sqlite-vec is installed. Re-run the migration after copying a DB that only has `clue_embeddings`, or to rebuild from scratch.
+
 ### Outcome
 
-- **Table:** `clue_embeddings` (`clue_id` → `clues.id`, `ON DELETE CASCADE`, `embedding` BLOB).
+- **Tables:** `clue_embeddings` (`clue_id` → `clues.id`, `ON DELETE CASCADE`, `embedding` BLOB) and `clue_vec_index` (`vec0`, cosine KNN).
 - **Does not modify** the `clues` table.
 - **Per-clue text embedded:** `game_category | clue_text | answer_text` (same string shape at query time for search).
 - **Storage:** `text-embedding-3-small`, **512** dimensions, raw **float32** little-endian bytes (~2 KB per clue). Details: `src/embeddings.py`.
@@ -219,12 +238,89 @@ The script is **resumable**: only clues missing from `clue_embeddings` are proce
 
 The web UI **Magic** mode calls `/api/search/magic` (cosine similarity + score threshold). **Exact** mode keeps FTS tag search unchanged.
 
-**Search-time API usage:** Clue vectors are computed once by `vector-embed.py` and stored on disk. Each Magic search still calls OpenAI **once** to embed the user’s query (same model/dims), then runs **chunked** local cosine similarity over `clue_embeddings` (batched reads + NumPy; bounded RAM for small EC2 instances). Tune batch size with `JANSWER_MAGIC_BATCH_SIZE` (default `20000`). Query embedding is cheap per request compared to indexing the full corpus.
+**Search-time API usage:** Clue vectors are stored in `clue_embeddings` and indexed in `clue_vec_index`. Each Magic search calls OpenAI **once** to embed the query, then runs a **sqlite-vec KNN** query (`MATCH` + `k`) — fast on small instances (e.g. `t4g.micro`) compared to scanning the full corpus in Python.
 
-**Future enhancements**
+**Future enhancement:** **local query embedding** so Magic search needs no OpenAI call after the batch job (re-embed clues with the same local model so spaces match).
 
-- **Local query embedding** — run the query vector on-device so Magic search needs no OpenAI call after the batch job (re-embed clues with the same local model so spaces match).
-- **sqlite-vec** — load the [sqlite-vec](https://github.com/asg017/sqlite-vec) extension and store vectors in a `vec0` (or similar) table with an **ANN index** for millisecond-scale top‑k on large corpora instead of a full linear scan. High level: install extension on the API host, migrate `clue_embeddings` BLOBs into vec format, replace chunked scan with `vec_distance` / KNN SQL, rebuild index after bulk embeds. Best when chunked search feels too slow at full archive scale; more deploy work than chunked scan but much faster queries once indexed.
+### Production (EC2 via Session Manager)
+
+On **Amazon Linux 2023** (e.g. `t4g.micro` from `docs/aws.md`), use **AWS Systems Manager Session Manager** instead of SSH if you prefer. From your laptop (AWS CLI v2, same region as the instance):
+
+1. **Find the instance ID** (stack output or console):
+
+   ```bash
+   aws ec2 describe-instances --region us-east-1 \
+     --filters "Name=tag:aws:cloudformation:stack-name,Values=j-answer-app" \
+     --query "Reservations[].Instances[].InstanceId" --output text
+   ```
+
+2. **Start an interactive shell** on the box:
+
+   ```bash
+   aws ssm start-session --target i-0123456789abcdef0 --region us-east-1
+   ```
+
+   You land as `ssm-user` or similar; switch to the app user and directory used in deploy:
+
+   ```bash
+   sudo -iu ec2-user
+   cd /opt/j-answer/app
+   source venv/bin/activate
+   ```
+
+3. **Install / upgrade dependencies** (includes `sqlite-vec`):
+
+   ```bash
+   git pull
+   pip install -r requirements.txt
+   ```
+
+4. **Stop the API** while the DB is migrated (avoids SQLite lock errors):
+
+   ```bash
+   sudo systemctl stop janswer-api
+   ```
+
+5. **Build or rebuild the vec index** on the production DB:
+
+   ```bash
+   python scripts/migrate_vec_index.py --db /opt/j-answer/data/j-answer.db -v
+   ```
+
+   Expect a few minutes for a full archive (~500k vectors). Check counts:
+
+   ```bash
+   sqlite3 /opt/j-answer/data/j-answer.db \
+     "SELECT (SELECT COUNT(*) FROM clue_embeddings) AS blobs,
+             (SELECT COUNT(*) FROM clue_vec_index) AS indexed;"
+   ```
+
+6. **Start the API** and smoke-test Magic search:
+
+   ```bash
+   sudo systemctl start janswer-api
+   curl -sS "http://127.0.0.1:8000/api/embeddings/status"
+   curl -sS "http://127.0.0.1:8000/api/search/magic?q=US%20presidents&limit=3"
+   ```
+
+7. **Exit** the session: `exit` twice (ec2-user shell, then SSM).
+
+**Uploading a new database from your laptop:** stop the API on EC2, copy `j-answer.db` to `/opt/j-answer/data/` (e.g. `scp` or CI rsync from `docs/aws.md`), run `migrate_vec_index.py` on the instance, then start the API.
+
+**One-liner remote migrate** (no interactive shell; replace instance ID):
+
+```bash
+aws ssm send-command --region us-east-1 \
+  --instance-ids i-0123456789abcdef0 \
+  --document-name AWS-RunShellScript \
+  --parameters commands='[
+    "sudo systemctl stop janswer-api",
+    "sudo -u ec2-user bash -lc \"cd /opt/j-answer/app && source venv/bin/activate && pip install -r requirements.txt && python scripts/migrate_vec_index.py --db /opt/j-answer/data/j-answer.db\"",
+    "sudo systemctl start janswer-api"
+  ]'
+```
+
+Poll status with `aws ssm list-command-invocations` / `get-command-invocation`.
 
 ---
 
@@ -245,7 +341,6 @@ The `web/` app is a Vite + React + Tailwind SPA. It loads random clues from SQLi
 | `JANSWER_DB` | Optional. Absolute or relative path to the SQLite file. If unset, the API uses `j-answer.db` in the **repository root** (same default as the CLI). |
 | `OPENAI_API_KEY` | Required for **Magic** search on the **API process** (see below). Not read by the browser or Vite—only by Uvicorn/`src/semantic_search.py`. |
 | `JANSWER_MAGIC_MIN_SCORE` | Optional. Minimum cosine similarity for Magic results (default `0.45`; UI slider overrides per request). |
-| `JANSWER_MAGIC_BATCH_SIZE` | Optional. Clues per batch during Magic scan (default `20000`; lower if RAM is tight). |
 
 Setting the key for the embed script (`vector-embed.py`) does **not** automatically apply to the API. Use the **same terminal session** (or set the variable in your IDE run configuration) **before** starting Uvicorn, then restart the API if it was already running.
 
@@ -295,7 +390,7 @@ Endpoints used by the UI:
 | `GET` | `/api/random-clue` | One random clue |
 | `GET` | `/api/search?tag=a&tag=b` | **Exact** full-text search; repeat `tag` for each term (AND). Optional `limit` (1–500, default 100). |
 | `GET` | `/api/search/magic?q=...` | **Magic** semantic search over clues in `clue_embeddings` only. Requires `OPENAI_API_KEY` on the API host. Optional `limit`, `min_score` (default `0.45` or `JANSWER_MAGIC_MIN_SCORE`). |
-| `GET` | `/api/embeddings/status` | Embedded clue count (Magic search pool size). |
+| `GET` | `/api/embeddings/status` | `embedded`, `vec_indexed`, and `magic_available` (both BLOBs and vec index must be present). |
 
 **CORS:** Local Vite origins are always allowed. For production hosting behind another hostname or split origins, set **`CORS_ORIGINS`** (comma-separated) in the API environment; same-origin nginx + `/api` proxy usually does not require changes. See **`docs/aws.md`** if you deploy to AWS.
 
@@ -339,7 +434,7 @@ End goal: a web-based, Quizlet-style experience over the full J-Archive-derived 
 | **2** | Core flashcard UI | Random clue, flip animation, Jeopardy-style presentation — **done** |
 | **3** | Search & filtering | Multi-tag AND search, result list → card; FTS-backed — **done** for MVP (pagination, highlights, round/date filters later) |
 | **4** | AI categorization | Batch LLM pass to fill `ai_category` / `ai_subcategory` from a controlled taxonomy; storage and re-runs |
-| **5** | Smarter search | Magic vibe search + chunked scan over `clue_embeddings`; sqlite-vec ANN + local query embedding later; hybrid with FTS |
+| **5** | Smarter search | Magic vibe search via sqlite-vec KNN; local query embedding + hybrid with FTS later |
 | **6** | Statistics & taxonomy UI | Hierarchy by AI categories, counts per node, “study this bucket” random sessions |
 
 Principles: iterate in phases; keep scraping and persistence separate from the UI; call out J-Archive rate limits and HTML quirks early; keep interactions snappy and mobile-friendly.
@@ -361,8 +456,11 @@ src/
   parser.py
   scraper.py
   search.py         # FTS5 multi-tag search helpers
-  semantic_search.py # Magic search (cosine similarity over clue_embeddings)
+  semantic_search.py # Magic search (sqlite-vec vec0 KNN)
+  vec_index.py      # clue_vec_index build/sync helpers
   embeddings.py     # clue_embeddings BLOB format + schema helpers
+scripts/
+  migrate_vec_index.py  # one-shot rebuild of clue_vec_index from BLOBs
 embed/
   vector-embed.py   # local batch embed job (OpenAI)
   requirements-embed.txt

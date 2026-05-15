@@ -17,7 +17,9 @@ from src.semantic_search import (
     embeddings_table_exists,
     magic_min_score,
     search_clues_by_vibe,
+    vec_index_ready,
 )
+from src.vec_index import count_vec_index
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB = _REPO_ROOT / "j-answer.db"
@@ -175,13 +177,17 @@ def embeddings_status() -> dict:
     try:
         if not embeddings_table_exists(conn):
             embedded = 0
+            indexed = 0
         else:
             embedded = count_embedded_clues(conn)
+            indexed = count_vec_index(conn)
+        magic_available = embedded > 0 and vec_index_ready(conn)
     finally:
         conn.close()
     return {
         "embedded": embedded,
-        "magic_available": embedded > 0,
+        "vec_indexed": indexed,
+        "magic_available": magic_available,
         "min_score": magic_min_score(),
     }
 

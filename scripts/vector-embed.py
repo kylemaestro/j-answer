@@ -24,6 +24,7 @@ from src.embeddings import (  # noqa: E402
     embedding_to_blob,
     ensure_embeddings_schema,
 )
+from src.vec_index import load_sqlite_vec, upsert_vec_rows  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -124,6 +125,16 @@ def run_embedding_job(
         return 1
 
     ensure_embeddings_schema(conn)
+    try:
+        load_sqlite_vec(conn)
+        vec_available = True
+    except Exception as exc:
+        vec_available = False
+        log.warning(
+            "sqlite-vec not available (%s); embeddings will be stored in "
+            "clue_embeddings only. Run scripts/migrate_vec_index.py before Magic search.",
+            exc,
+        )
 
     clue_total, embedded_before, pending = count_embeddings(conn)
     to_process = pending if limit <= 0 else min(limit, pending)
@@ -205,14 +216,17 @@ def run_embedding_job(
             backoff_base_s=backoff_base_s,
         )
 
+        rows = [
+            (clue_id, embedding_to_blob(emb))
+            for clue_id, emb in zip(ids, embeddings)
+        ]
         conn.executemany(
             "INSERT OR IGNORE INTO clue_embeddings (clue_id, embedding) VALUES (?, ?)",
-            [
-                (clue_id, embedding_to_blob(emb))
-                for clue_id, emb in zip(ids, embeddings)
-            ],
+            rows,
         )
         conn.commit()
+        if vec_available:
+            upsert_vec_rows(conn, rows)
 
         total_this_run += len(rows)
         pending_left = max(0, pending - total_this_run)
