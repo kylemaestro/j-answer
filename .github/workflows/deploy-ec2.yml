@@ -5,7 +5,7 @@
 #   DEPLOY_USER       — e.g. ec2-user (AL2023)
 #   DEPLOY_SSH_KEY    — full private PEM (ed25519 or RSA) for key auth; store only deploy key on server
 #
-# First-time server: follow README "Deployment and Infrastructure" (venv, systemd, nginx, TLS).
+# First-time server: follow docs/aws.md (venv, systemd, nginx, TLS).
 
 name: Deploy to EC2
 
@@ -68,5 +68,5 @@ jobs:
           test -d venv || python3 -m venv venv
           ./venv/bin/pip install --upgrade pip
           ./venv/bin/pip install -r requirements.txt
-          sudo systemctl restart janswer-api || echo "WARN: janswer-api not installed yet — see README"
+          sudo systemctl restart janswer-api || echo "WARN: janswer-api not installed yet — see docs/aws.md"
           REMOTE

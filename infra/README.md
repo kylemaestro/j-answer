@@ -1,38 +1,21 @@
 # Infrastructure (AWS)
 
-## CloudFormation — single EC2 + Elastic IP
+End-to-end deployment steps (CloudFormation, **GoDaddy DNS**, nginx, TLS, systemd, database uploads, optional GitHub Actions) live in **`docs/aws.md`**.
 
-Template: `cloudformation/ec2-janswer.yaml`
+This folder holds the **CloudFormation** template: `cloudformation/ec2-janswer.yaml`.
 
-- Default instance: **Amazon Linux 2023** on **ARM64** (`t4g.micro`) with the SSM default AMI parameter.
-- If you use **x86** (e.g. `t3.micro`), override **`LatestAmiId`** to  
-  `/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64`.
-- **IAM**: instance profile includes **AmazonSSMManagedInstanceCore** (Session Manager, no inbound SSH required if you prefer).
-- **Optional SSH** for `rsync` from GitHub Actions: parameter **`AllowSSHFromInternet`** (default `true` opens port 22 to the world — tighten or set `false` after you move to SSM/S3 deploy).
-
-### Deploy the stack
-
-From the **repository root**:
+Quick deploy from the repository root (resolve **default VPC** in the same region, then pass **`VpcId`**; add the **`j-answer`** `A` record in GoDaddy using the stack’s **PublicIp** output — see **`docs/aws.md`** §2–§3):
 
 ```bash
+DEFAULT_VPC=$(aws ec2 describe-vpcs --region us-east-1 --filters Name=isDefault,Values=true --query "Vpcs[0].VpcId" --output text)
 aws cloudformation deploy \
   --region us-east-1 \
   --stack-name j-answer-app \
   --template-file infra/cloudformation/ec2-janswer.yaml \
   --capabilities CAPABILITY_IAM \
-  --parameter-overrides InstanceType=t4g.micro AllowSSHFromInternet=true
+  --parameter-overrides VpcId="${DEFAULT_VPC}" InstanceType=t4g.micro AllowSSHFromInternet=true
 ```
 
-Optional key pair for emergency SSH:
+Optional: if `kylemeister.dev` is a **Route 53 hosted zone in this AWS account**, add `HostedZoneId=Z...` to **`--parameter-overrides`** so the stack creates the DNS record.
 
-```bash
-  --parameter-overrides InstanceType=t4g.micro KeyName=my-key AllowSSHFromInternet=true
-```
-
-Read stack outputs (Elastic IP for Route53):
-
-```bash
-aws cloudformation describe-stacks --stack-name j-answer-app --query "Stacks[0].Outputs" --output table
-```
-
-Full server setup (nginx, TLS, systemd, first app deploy) is in the main repository **README** under **Deployment and Infrastructure**.
+See **`docs/aws.md`** for GoDaddy steps, x86 AMI overrides, and server bootstrap.

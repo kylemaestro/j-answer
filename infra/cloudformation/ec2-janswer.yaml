@@ -5,6 +5,21 @@ Description: >
   it and use AWS Systems Manager Session Manager after bootstrap.
 
 Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: >
+      VPC for the security group and instance. Use your account default VPC unless you
+      know you need another (must include a public subnet and route to an Internet Gateway
+      for Elastic IP + HTTPS). Example lookup: aws ec2 describe-vpcs --filters Name=isDefault,Values=true ...
+
+  SubnetId:
+    Type: String
+    Default: ""
+    Description: >
+      Optional. Subnet for the EC2 instance (must belong to VpcId). Leave empty to let
+      AWS pick the default subnet in the default VPC (typical when VpcId is your default VPC).
+      Set when VpcId is not the default VPC or you want a specific AZ.
+
   InstanceType:
     Type: String
     Default: t4g.micro
@@ -28,9 +43,25 @@ Parameters:
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
     Description: SSM parameter for Amazon Linux 2023 AMI (arm64). For t3.micro use the x86_64 path in console or override.
 
+  HostedZoneId:
+    Type: String
+    Default: ""
+    Description: >
+      Optional. Only if kylemeister.dev (or parent zone) is a Route 53 hosted zone
+      in this AWS account. When non-empty, creates an A record for DnsRecordName to
+      this stack's Elastic IP. Omit for DNS at a registrar (e.g. GoDaddy); add the
+      j-answer A record manually instead.
+
+  DnsRecordName:
+    Type: String
+    Default: j-answer.kylemeister.dev
+    Description: FQDN for the site; must be a zone apex or subdomain of HostedZoneId when DNS is enabled.
+
 Conditions:
   UseKeyPair: !Not [!Equals [!Ref KeyName, ""]]
   OpenSSH: !Equals [!Ref AllowSSHFromInternet, "true"]
+  CreateDnsRecord: !Not [!Equals [!Ref HostedZoneId, ""]]
+  UseExplicitSubnet: !Not [!Equals [!Ref SubnetId, ""]]
 
 Resources:
   InstanceRole:
@@ -58,6 +89,7 @@ Resources:
   AppSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
+      VpcId: !Ref VpcId
       GroupDescription: j-answer web + optional SSH
       SecurityGroupIngress:
         - IpProtocol: tcp
@@ -70,10 +102,7 @@ Resources:
           ToPort: 443
           CidrIp: 0.0.0.0/0
           Description: HTTPS
-      SecurityGroupEgress:
-        - IpProtocol: "-1"
-          CidrIp: 0.0.0.0/0
-          Description: All outbound
+      # Omit SecurityGroupEgress: default allow-all outbound is added automatically in a VPC.
       Tags:
         - Key: Project
           Value: j-answer
@@ -104,6 +133,7 @@ Resources:
       ImageId: !Ref LatestAmiId
       KeyName: !If [UseKeyPair, !Ref KeyName, !Ref "AWS::NoValue"]
       IamInstanceProfile: !Ref InstanceProfile
+      SubnetId: !If [UseExplicitSubnet, !Ref SubnetId, !Ref "AWS::NoValue"]
       SecurityGroupIds:
         - !Ref AppSecurityGroup
       Tags:
@@ -115,12 +145,16 @@ Resources:
         Fn::Base64: !Sub |
           #!/bin/bash
           set -euo pipefail
-          dnf update -y
-          dnf install -y nginx python3 python3-pip python3-venv git
-          mkdir -p /opt/j-answer/{app,data,web}
+          # Create layout first so /opt/j-answer exists even if a package name changes on some AMIs/arch.
+          mkdir -p /opt/j-answer/{app,data,web/dist}
           chown -R ec2-user:ec2-user /opt/j-answer
+          dnf update -y
+          # Do not install python3-venv here: on several AL2023 ARM builds that RPM name is missing and dnf
+          # aborts the whole script (set -e), skipping the mkdir above if it were ordered later.
+          # python3 + pip are enough for `python3 -m venv` on stock AL2023 system Python 3.9.
+          dnf install -y nginx python3 python3-pip git
           systemctl enable --now nginx
-          echo "Bootstrap done. Deploy app + TLS via README (certbot, systemd, rsync)."
+          echo "Bootstrap done. Deploy app + TLS per docs/aws.md (certbot, systemd)."
 
   EIPAssociation:
     Type: AWS::EC2::EIPAssociation
@@ -128,10 +162,25 @@ Resources:
       InstanceId: !Ref AppInstance
       AllocationId: !GetAtt ElasticIP.AllocationId
 
+  AppDnsRecord:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDnsRecord
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub "${DnsRecordName}."
+      Type: A
+      TTL: "300"
+      ResourceRecords:
+        - !Ref ElasticIP
+
 Outputs:
   PublicIp:
-    Description: Elastic IP — point Route53 A record (j-answer.example.com) here
+    Description: Elastic IP (Route53 A record created automatically if HostedZoneId was set)
     Value: !Ref ElasticIP
+  DnsRecordNameOut:
+    Condition: CreateDnsRecord
+    Description: FQDN created in Route 53 (when HostedZoneId was provided)
+    Value: !Ref DnsRecordName
   InstanceId:
     Description: EC2 instance ID (for SSM / debugging)
     Value: !Ref AppInstance
