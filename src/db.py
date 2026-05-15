@@ -9,6 +9,11 @@ from typing import Any, Iterable, Mapping
 
 SCHEMA_VERSION = 2
 
+
+class JAnswerConnection(sqlite3.Connection):
+    """Subclass so connections can cache sqlite-vec init (see ``vec_index.load_sqlite_vec``)."""
+
+
 DDL = """
 PRAGMA foreign_keys = ON;
 
@@ -83,7 +88,7 @@ CREATE INDEX IF NOT EXISTS idx_crawl_games_status ON crawl_games(status);
 def connect(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), factory=JAnswerConnection)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn

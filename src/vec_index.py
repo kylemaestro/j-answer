@@ -14,6 +14,9 @@ VEC_TABLE = "clue_vec_index"
 META_VEC_INDEX_VERSION = "vec_index_version"
 VEC_INDEX_VERSION = "2"
 
+# sqlite_vec.load() twice on the same connection fails with "error during initialization".
+_CONN_VEC_VERSION_ATTR = "_janswer_sqlite_vec_version"
+
 _VEC0_DDL = f"""
 CREATE VIRTUAL TABLE {VEC_TABLE} USING vec0(
     clue_id INTEGER PRIMARY KEY,
@@ -30,13 +33,17 @@ BEGIN
 END;
 """
 
-
 def load_sqlite_vec(conn: sqlite3.Connection) -> str:
-    """Load the sqlite-vec extension. Returns vec_version()."""
+    """Load the sqlite-vec extension once per connection. Returns vec_version()."""
+    cached = getattr(conn, _CONN_VEC_VERSION_ATTR, None)
+    if cached is not None:
+        return cached
     conn.enable_load_extension(True)
     sqlite_vec.load(conn)
     conn.enable_load_extension(False)
-    return conn.execute("SELECT vec_version()").fetchone()[0]
+    ver = conn.execute("SELECT vec_version()").fetchone()[0]
+    setattr(conn, _CONN_VEC_VERSION_ATTR, ver)
+    return ver
 
 
 def read_vec_index_version(conn: sqlite3.Connection) -> str | None:
@@ -51,8 +58,8 @@ def read_vec_index_version(conn: sqlite3.Connection) -> str | None:
 
 
 def vec_index_needs_rebuild(conn: sqlite3.Connection) -> bool:
-    """True when the vec table is missing, empty, or built with an older schema."""
-    if not vec_index_table_exists(conn) or count_vec_index(conn) == 0:
+    """True when the vec table is missing or built with an older schema."""
+    if not vec_index_table_exists(conn):
         return True
     stored = read_vec_index_version(conn)
     return stored != VEC_INDEX_VERSION
@@ -113,8 +120,9 @@ def ensure_vec_index(conn: sqlite3.Connection) -> None:
 def drop_vec_index(conn: sqlite3.Connection) -> None:
     if not vec_index_table_exists(conn):
         return
-    conn.execute(f"DROP TABLE {VEC_TABLE}")
+    # Trigger body references clue_vec_index; SQLite rejects DROP TABLE otherwise.
     conn.execute("DROP TRIGGER IF EXISTS clue_embeddings_ad_vec")
+    conn.execute(f"DROP TABLE {VEC_TABLE}")
     conn.commit()
 
 
