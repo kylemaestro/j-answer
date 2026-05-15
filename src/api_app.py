@@ -194,7 +194,7 @@ def search_clues_magic(
         None,
         ge=0.0,
         le=1.0,
-        description="Minimum cosine similarity (default from JANSWER_MAGIC_MIN_SCORE or 0.32)",
+        description="Minimum cosine similarity (default from JANSWER_MAGIC_MIN_SCORE or 0.45)",
     ),
 ) -> dict:
     """

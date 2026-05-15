@@ -241,7 +241,7 @@ The `web/` app is a Vite + React + Tailwind SPA. It loads random clues from SQLi
 | -------- | ------- |
 | `JANSWER_DB` | Optional. Absolute or relative path to the SQLite file. If unset, the API uses `j-answer.db` in the **repository root** (same default as the CLI). |
 | `OPENAI_API_KEY` | Required for **Magic** search on the **API process** (see below). Not read by the browser or Vite—only by Uvicorn/`src/semantic_search.py`. |
-| `JANSWER_MAGIC_MIN_SCORE` | Optional. Minimum cosine similarity for Magic results (default `0.32`). |
+| `JANSWER_MAGIC_MIN_SCORE` | Optional. Minimum cosine similarity for Magic results (default `0.45`; UI slider overrides per request). |
 
 Setting the key for the embed script (`vector-embed.py`) does **not** automatically apply to the API. Use the **same terminal session** (or set the variable in your IDE run configuration) **before** starting Uvicorn, then restart the API if it was already running.
 
@@ -290,7 +290,7 @@ Endpoints used by the UI:
 | `GET` | `/api/health` | Liveness check |
 | `GET` | `/api/random-clue` | One random clue |
 | `GET` | `/api/search?tag=a&tag=b` | **Exact** full-text search; repeat `tag` for each term (AND). Optional `limit` (1–500, default 100). |
-| `GET` | `/api/search/magic?q=...` | **Magic** semantic search over clues in `clue_embeddings` only. Requires `OPENAI_API_KEY` on the API host. Optional `limit`, `min_score` (default `0.32` or `JANSWER_MAGIC_MIN_SCORE`). |
+| `GET` | `/api/search/magic?q=...` | **Magic** semantic search over clues in `clue_embeddings` only. Requires `OPENAI_API_KEY` on the API host. Optional `limit`, `min_score` (default `0.45` or `JANSWER_MAGIC_MIN_SCORE`). |
 | `GET` | `/api/embeddings/status` | Embedded clue count (Magic search pool size). |
 
 **CORS:** Local Vite origins are always allowed. For production hosting behind another hostname or split origins, set **`CORS_ORIGINS`** (comma-separated) in the API environment; same-origin nginx + `/api` proxy usually does not require changes. See **`docs/aws.md`** if you deploy to AWS.
@@ -319,7 +319,7 @@ Static output is in `web/dist/`. For production, prefer **same-origin** nginx: s
 
 ### Using the UI
 
-- **Search** — toggle **Exact** (tags + FTS5, same as before) or **Magic** (natural-language vibe search over embedded clues only). Magic requires embeddings in the DB and `OPENAI_API_KEY` when running the API. Tap a result row to open that clue on the card.
+- **Search** — toggle **Exact** (tags + FTS5, same as before) or **Magic** (natural-language vibe search over embedded clues only, with a **confidence** slider for minimum similarity, default 0.45). Magic requires embeddings in the DB and `OPENAI_API_KEY` when running the API. Tap a result row to open that clue on the card.
 - **I’m feeling lucky** — loads a random clue from the database.
 - **Card** — click or tap to flip between clue and answer (keyboard: Enter / Space when focused).
 

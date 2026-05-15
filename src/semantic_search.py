@@ -17,7 +17,7 @@ from src.embeddings import (
 )
 from src.search import row_to_clue_dict
 
-DEFAULT_MIN_SCORE = 0.32
+DEFAULT_MIN_SCORE = 0.45
 _CLUE_SELECT = """
     c.id,
     c.jarchive_game_id,

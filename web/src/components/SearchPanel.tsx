@@ -47,8 +47,14 @@ async function fetchExactSearch(tags: string[]): Promise<ExactSearchResponse> {
   return res.json() as Promise<ExactSearchResponse>;
 }
 
-async function fetchMagicSearch(query: string): Promise<MagicSearchResponse> {
-  const params = new URLSearchParams({ q: query });
+async function fetchMagicSearch(
+  query: string,
+  minScore: number,
+): Promise<MagicSearchResponse> {
+  const params = new URLSearchParams({
+    q: query,
+    min_score: minScore.toFixed(2),
+  });
   const res = await fetch(`/api/search/magic?${params.toString()}`);
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<MagicSearchResponse>;
@@ -59,6 +65,10 @@ async function fetchEmbeddingsStatus(): Promise<EmbeddingsStatus> {
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<EmbeddingsStatus>;
 }
+
+const DEFAULT_MIN_CONFIDENCE = 0.45;
+const MIN_CONFIDENCE = 0.2;
+const MAX_CONFIDENCE = 0.85;
 
 type SearchPanelProps = {
   onSelectClue: (clue: RandomClue) => void;
@@ -73,10 +83,16 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [embeddedPool, setEmbeddedPool] = useState<number | null>(null);
+  const [minConfidence, setMinConfidence] = useState(DEFAULT_MIN_CONFIDENCE);
 
   useEffect(() => {
     void fetchEmbeddingsStatus()
-      .then((s) => setEmbeddedPool(s.embedded))
+      .then((s) => {
+        setEmbeddedPool(s.embedded);
+        if (typeof s.min_score === "number" && s.min_score > 0) {
+          setMinConfidence(s.min_score);
+        }
+      })
       .catch(() => setEmbeddedPool(null));
   }, []);
 
@@ -143,7 +159,7 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
     const t = window.setTimeout(() => {
       setLoading(true);
       setError(null);
-      void fetchMagicSearch(q)
+      void fetchMagicSearch(q, minConfidence)
         .then((data) => {
           setResults(data.clues);
           setEmbeddedPool(data.embedded_pool);
@@ -156,7 +172,7 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
     }, 400);
 
     return () => window.clearTimeout(t);
-  }, [mode, magicQuery]);
+  }, [mode, magicQuery, minConfidence]);
 
   const resultCount = results.length;
   const showResultSummary =
@@ -297,6 +313,33 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
             className="min-h-11 w-full rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
             autoComplete="off"
           />
+          <div className="mt-4 px-1">
+            <div className="flex items-center justify-between gap-3 text-xs text-clue">
+              <label htmlFor="magic-confidence" className="font-semibold uppercase tracking-wide text-white/80">
+                Confidence
+              </label>
+              <span className="tabular-nums text-white/90" aria-live="polite">
+                {minConfidence.toFixed(2)}+
+              </span>
+            </div>
+            <input
+              id="magic-confidence"
+              type="range"
+              min={MIN_CONFIDENCE}
+              max={MAX_CONFIDENCE}
+              step={0.01}
+              value={minConfidence}
+              onChange={(e) => setMinConfidence(Number(e.target.value))}
+              className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-full bg-white/20 accent-white"
+              aria-valuemin={MIN_CONFIDENCE}
+              aria-valuemax={MAX_CONFIDENCE}
+              aria-valuenow={minConfidence}
+              aria-label="Minimum similarity score for Magic search results"
+            />
+            <p className="mt-1.5 text-center text-[0.65rem] text-white/50 text-clue">
+              Higher = stricter matches (fewer results)
+            </p>
+          </div>
           {embeddedPool === 0 ? (
             <p className="mt-2 text-center text-xs text-amber-200/90 text-clue">
               No embeddings yet — run{" "}
@@ -311,8 +354,8 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
             </p>
           ) : (
             <p className="mt-2 text-center text-xs text-white/55 text-clue">
-              Describe a topic or vibe; results use AI similarity (tags not
-              available in Magic mode).
+              Describe a topic or vibe; only clues at or above the confidence
+              cutoff are shown.
             </p>
           )}
         </form>
@@ -335,7 +378,10 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
       {showResultSummary ? (
         <p className="mt-3 text-center text-xs text-white/70 text-clue">
           {resultCount} match{resultCount === 1 ? "" : "es"}
-          {mode === "magic" ? " above similarity cutoff" : ""} — tap a row to
+          {mode === "magic"
+            ? ` with score ≥ ${minConfidence.toFixed(2)}`
+            : ""}{" "}
+          — tap a row to
           load the card
         </p>
       ) : null}
