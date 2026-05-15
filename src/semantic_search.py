@@ -82,15 +82,23 @@ def vec_index_ready(conn: sqlite3.Connection) -> bool:
 def embeddings_status_details(conn: sqlite3.Connection) -> dict[str, object]:
     """Diagnostics for /api/embeddings/status."""
     embedded = count_embedded_clues(conn)
-    indexed = count_vec_index(conn) if vec_index_table_exists(conn) else 0
-    stored_version = read_vec_index_version(conn)
-    needs_rebuild = vec_index_needs_rebuild(conn)
     sqlite_vec_version: str | None = None
-    if embedded > 0:
+    sqlite_vec_error: str | None = None
+    indexed = 0
+    needs_rebuild = True
+    stored_version: str | None = None
+
+    if vec_index_table_exists(conn):
         try:
             sqlite_vec_version = load_sqlite_vec(conn)
-        except Exception:
-            pass
+            indexed = count_vec_index(conn)
+            stored_version = read_vec_index_version(conn)
+            needs_rebuild = vec_index_needs_rebuild(conn)
+        except Exception as exc:
+            sqlite_vec_error = str(exc)
+    elif embedded > 0:
+        needs_rebuild = True
+
     return {
         "embedded": embedded,
         "vec_indexed": indexed,
@@ -98,6 +106,7 @@ def embeddings_status_details(conn: sqlite3.Connection) -> dict[str, object]:
         "vec_index_expected_version": VEC_INDEX_VERSION,
         "needs_vec_rebuild": needs_rebuild,
         "sqlite_vec_version": sqlite_vec_version,
+        "sqlite_vec_error": sqlite_vec_error,
         "search_backend": "vec0_ann" if not needs_rebuild else "none",
         "magic_available": embedded > 0 and not needs_rebuild,
         "min_score": magic_min_score(),

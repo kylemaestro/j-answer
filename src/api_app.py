@@ -173,6 +173,11 @@ def embeddings_status() -> dict:
     conn = connect(path)
     try:
         return embeddings_status_details(conn)
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database error: {e}",
+        ) from e
     finally:
         conn.close()
 

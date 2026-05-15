@@ -40,10 +40,13 @@ def load_sqlite_vec(conn: sqlite3.Connection) -> str:
 
 
 def read_vec_index_version(conn: sqlite3.Connection) -> str | None:
-    row = conn.execute(
-        "SELECT value FROM meta WHERE key = ?",
-        (META_VEC_INDEX_VERSION,),
-    ).fetchone()
+    try:
+        row = conn.execute(
+            "SELECT value FROM meta WHERE key = ?",
+            (META_VEC_INDEX_VERSION,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
     return row[0] if row else None
 
 
@@ -66,6 +69,7 @@ def vec_index_table_exists(conn: sqlite3.Connection) -> bool:
 def count_vec_index(conn: sqlite3.Connection) -> int:
     if not vec_index_table_exists(conn):
         return 0
+    load_sqlite_vec(conn)
     return conn.execute(f"SELECT COUNT(*) FROM {VEC_TABLE}").fetchone()[0]
 
 
