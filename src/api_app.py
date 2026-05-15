@@ -190,7 +190,7 @@ def embeddings_status() -> dict:
 def search_clues_magic(
     q: str = Query(..., min_length=1, description="Natural-language vibe query"),
     limit: int = Query(100, ge=1, le=500),
-    min_score: float | None = Query(
+    min_score: Optional[float] = Query(
         None,
         ge=0.0,
         le=1.0,
