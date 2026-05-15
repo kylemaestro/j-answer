@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
+import time
 from typing import Any
 
 import numpy as np
@@ -26,7 +28,9 @@ DEFAULT_MIN_SCORE = 0.45
 KNN_OVERSAMPLE = 5
 KNN_OVERSAMPLE_CAP = 200
 
-_openai_client: openai.OpenAI | None = None
+_openai_singleton: openai.OpenAI | None = None
+
+log = logging.getLogger(__name__)
 
 _CLUE_SELECT = """
     c.id,
@@ -148,11 +152,11 @@ def _search_vec_knn(
     return hits
 
 
-def _openai_client() -> openai.OpenAI:
-    global _openai_client
-    if _openai_client is None:
-        _openai_client = openai.OpenAI()
-    return _openai_client
+def get_openai_client() -> openai.OpenAI:
+    global _openai_singleton
+    if _openai_singleton is None:
+        _openai_singleton = openai.OpenAI()
+    return _openai_singleton
 
 
 def embed_query(text: str) -> np.ndarray:
@@ -163,7 +167,7 @@ def embed_query(text: str) -> np.ndarray:
     q = text.strip()
     if not q:
         raise ValueError("Query must not be empty.")
-    client = _openai_client()
+    client = get_openai_client()
     response = client.embeddings.create(
         model=EMBEDDING_MODEL,
         input=q,
@@ -202,11 +206,24 @@ def search_clues_by_vibe(
         )
 
     load_sqlite_vec(conn)
+    t_embed_start = time.perf_counter()
     query_vec = embed_query(query)
+    embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
     query_blob = query_vec.astype(np.float32).tobytes()
-    return _search_vec_knn(
+    t_knn_start = time.perf_counter()
+    hits = _search_vec_knn(
         conn,
         query_blob,
         limit=limit,
         min_score=min_score,
     )
+    knn_ms = (time.perf_counter() - t_knn_start) * 1000.0
+    log.info(
+        "magic_search ok query_chars=%s limit=%s embed_ms=%.1f knn_ms=%.1f hits=%s",
+        len(query.strip()),
+        limit,
+        embed_ms,
+        knn_ms,
+        len(hits),
+    )
+    return hits

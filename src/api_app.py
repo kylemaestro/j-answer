@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sqlite3
 from pathlib import Path
@@ -9,14 +10,18 @@ from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from openai import OpenAIError
 
 from src.db import connect
 from src.search import normalize_tags, row_to_clue_dict, search_clues_by_tags
 from src.semantic_search import (
     count_embedded_clues,
     embeddings_status_details,
+    magic_min_score,
     search_clues_by_vibe,
 )
+
+log = logging.getLogger(__name__)
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DEFAULT_DB = _REPO_ROOT / "j-answer.db"
@@ -232,6 +237,18 @@ def search_clues_magic(
             raise HTTPException(status_code=400, detail=str(e)) from e
         except RuntimeError as e:
             raise HTTPException(status_code=503, detail=str(e)) from e
+        except OpenAIError as e:
+            log.warning("Magic search OpenAI error: %s", e, exc_info=True)
+            raise HTTPException(
+                status_code=503,
+                detail=f"Embedding provider error: {e}",
+            ) from e
+        except Exception as e:
+            log.exception("Magic search failed")
+            raise HTTPException(
+                status_code=500,
+                detail="Magic search failed (see server logs).",
+            ) from e
     except sqlite3.OperationalError as e:
         raise HTTPException(
             status_code=503,
