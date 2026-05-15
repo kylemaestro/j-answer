@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 DEFAULT_DB = REPO_ROOT / "j-answer.db"
 BATCH_SIZE = 1000  # OpenAI allows up to 2048 per batch
 DEFAULT_RETRIES = 5
-DEFAULT_BACKOFF_BASE = 2.0
+DEFAULT_BACKOFF_BASE = 1.5
 
 _RETRYABLE_EXCEPTIONS = (
     RateLimitError,

@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
+import heapq
 import os
 import sqlite3
-from pathlib import Path
 from typing import Any
 
 import numpy as np
 import openai
 
 from src.embeddings import (
+    EMBEDDING_BYTES,
     EMBEDDING_DIMENSIONS,
     EMBEDDING_MODEL,
-    blob_to_embedding,
 )
 from src.search import row_to_clue_dict
 
 DEFAULT_MIN_SCORE = 0.45
+DEFAULT_BATCH_SIZE = 20_000
+
 _CLUE_SELECT = """
     c.id,
     c.jarchive_game_id,
@@ -31,8 +33,12 @@ _CLUE_SELECT = """
     c.answer_text
 """
 
-# db_path -> (mtime, clue_ids, normalized matrix, row dicts by id)
-_matrix_cache: dict[str, tuple[float, np.ndarray, np.ndarray, dict[int, sqlite3.Row]]] = {}
+_EMBEDDED_CLUES_SQL = f"""
+    SELECT {_CLUE_SELECT}, e.embedding AS embedding_blob
+    FROM clues AS c
+    INNER JOIN clue_embeddings AS e ON e.clue_id = c.id
+    ORDER BY c.id
+"""
 
 
 def magic_min_score() -> float:
@@ -43,6 +49,17 @@ def magic_min_score() -> float:
         return float(raw)
     except ValueError:
         return DEFAULT_MIN_SCORE
+
+
+def magic_batch_size() -> int:
+    raw = os.environ.get("JANSWER_MAGIC_BATCH_SIZE", "").strip()
+    if not raw:
+        return DEFAULT_BATCH_SIZE
+    try:
+        n = int(raw)
+        return max(1, n)
+    except ValueError:
+        return DEFAULT_BATCH_SIZE
 
 
 def embeddings_table_exists(conn: sqlite3.Connection) -> bool:
@@ -63,43 +80,76 @@ def _normalize_rows(matrix: np.ndarray) -> np.ndarray:
     return matrix / np.maximum(norms, 1e-8)
 
 
-def _load_matrix(
-    conn: sqlite3.Connection, db_path: str
-) -> tuple[np.ndarray, np.ndarray, dict[int, sqlite3.Row]]:
-    path = Path(db_path)
-    mtime = path.stat().st_mtime
-    cached = _matrix_cache.get(db_path)
-    if cached is not None and cached[0] == mtime:
-        return cached[1], cached[2], cached[3]
+def _update_topk(
+    heap: list[tuple[float, int, sqlite3.Row]],
+    score: float,
+    clue_id: int,
+    row: sqlite3.Row,
+    *,
+    limit: int,
+    min_score: float,
+) -> None:
+    if score < min_score:
+        return
+    entry = (score, clue_id, row)
+    if len(heap) < limit:
+        heapq.heappush(heap, entry)
+    elif score > heap[0][0]:
+        heapq.heapreplace(heap, entry)
 
-    cur = conn.execute(
-        f"""
-        SELECT {_CLUE_SELECT}, e.embedding AS embedding_blob
-        FROM clues AS c
-        INNER JOIN clue_embeddings AS e ON e.clue_id = c.id
-        ORDER BY c.id
-        """
-    )
-    rows = cur.fetchall()
-    if not rows:
-        empty_ids = np.array([], dtype=np.int64)
-        empty_matrix = np.empty((0, EMBEDDING_DIMENSIONS), dtype=np.float32)
-        _matrix_cache[db_path] = (mtime, empty_ids, empty_matrix, {})
-        return empty_ids, empty_matrix, {}
 
-    clue_ids: list[int] = []
-    vectors: list[np.ndarray] = []
-    by_id: dict[int, sqlite3.Row] = {}
-    for row in rows:
-        clue_ids.append(row["id"])
-        vectors.append(blob_to_embedding(row["embedding_blob"]))
-        by_id[row["id"]] = row
+def _search_chunked(
+    conn: sqlite3.Connection,
+    query_vec: np.ndarray,
+    *,
+    limit: int,
+    min_score: float,
+    batch_size: int,
+) -> list[tuple[dict[str, Any], float]]:
+    """Brute-force cosine similarity in batches (bounded RAM)."""
+    if limit <= 0:
+        return []
 
-    ids_arr = np.array(clue_ids, dtype=np.int64)
-    matrix = np.stack(vectors, axis=0)
-    matrix = _normalize_rows(matrix)
-    _matrix_cache[db_path] = (mtime, ids_arr, matrix, by_id)
-    return ids_arr, matrix, by_id
+    heap: list[tuple[float, int, sqlite3.Row]] = []
+    cur = conn.execute(_EMBEDDED_CLUES_SQL)
+
+    while True:
+        rows = cur.fetchmany(batch_size)
+        if not rows:
+            break
+
+        n = len(rows)
+        ids = np.empty(n, dtype=np.int64)
+        matrix = np.empty((n, EMBEDDING_DIMENSIONS), dtype=np.float32)
+        for i, row in enumerate(rows):
+            ids[i] = row["id"]
+            blob = row["embedding_blob"]
+            if len(blob) != EMBEDDING_BYTES:
+                raise ValueError(
+                    f"clue_id {row['id']}: expected {EMBEDDING_BYTES} embedding bytes, "
+                    f"got {len(blob)}"
+                )
+            matrix[i] = np.frombuffer(blob, dtype=np.float32)
+
+        matrix = _normalize_rows(matrix)
+        scores = matrix @ query_vec
+
+        for i in range(n):
+            s = float(scores[i])
+            _update_topk(
+                heap,
+                s,
+                int(ids[i]),
+                rows[i],
+                limit=limit,
+                min_score=min_score,
+            )
+
+    if not heap:
+        return []
+
+    heap.sort(key=lambda x: x[0], reverse=True)
+    return [(row_to_clue_dict(row), score) for score, _, row in heap]
 
 
 def embed_query(text: str) -> np.ndarray:
@@ -132,29 +182,21 @@ def search_clues_by_vibe(
     min_score: float | None = None,
 ) -> list[tuple[dict[str, Any], float]]:
     """
-    Cosine similarity over embedded clues only.
+    Cosine similarity over embedded clues only (chunked scan, bounded memory).
     Returns (clue dict, score) pairs sorted by score descending.
     """
+    del db_path  # kept for API compatibility; scan uses conn only
     if min_score is None:
         min_score = magic_min_score()
 
-    ids, matrix, by_id = _load_matrix(conn, db_path)
-    if matrix.shape[0] == 0:
+    if count_embedded_clues(conn) == 0:
         return []
 
     query_vec = embed_query(query)
-    scores = matrix @ query_vec
-    above = np.where(scores >= min_score)[0]
-    if above.size == 0:
-        return []
-
-    order = above[np.argsort(scores[above])[::-1]]
-    if limit > 0:
-        order = order[:limit]
-
-    out: list[tuple[dict[str, Any], float]] = []
-    for idx in order:
-        clue_id = int(ids[idx])
-        row = by_id[clue_id]
-        out.append((row_to_clue_dict(row), float(scores[idx])))
-    return out
+    return _search_chunked(
+        conn,
+        query_vec,
+        limit=limit,
+        min_score=min_score,
+        batch_size=magic_batch_size(),
+    )

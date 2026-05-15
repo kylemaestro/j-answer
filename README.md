@@ -219,9 +219,12 @@ The script is **resumable**: only clues missing from `clue_embeddings` are proce
 
 The web UI **Magic** mode calls `/api/search/magic` (cosine similarity + score threshold). **Exact** mode keeps FTS tag search unchanged.
 
-**Search-time API usage:** Clue vectors are computed once by `vector-embed.py` and stored on disk. Each Magic search still calls OpenAI **once** to embed the user’s query (same model/dims), then runs local cosine similarity over stored BLOBs. Query embedding is cheap per request compared to indexing the full corpus.
+**Search-time API usage:** Clue vectors are computed once by `vector-embed.py` and stored on disk. Each Magic search still calls OpenAI **once** to embed the user’s query (same model/dims), then runs **chunked** local cosine similarity over `clue_embeddings` (batched reads + NumPy; bounded RAM for small EC2 instances). Tune batch size with `JANSWER_MAGIC_BATCH_SIZE` (default `20000`). Query embedding is cheap per request compared to indexing the full corpus.
 
-**Future enhancement:** Run **query** embedding locally (e.g. on-device model) so Magic search needs no OpenAI call after the batch job—likely paired with re-embedding clues using the same local model so vectors stay in one space.
+**Future enhancements**
+
+- **Local query embedding** — run the query vector on-device so Magic search needs no OpenAI call after the batch job (re-embed clues with the same local model so spaces match).
+- **sqlite-vec** — load the [sqlite-vec](https://github.com/asg017/sqlite-vec) extension and store vectors in a `vec0` (or similar) table with an **ANN index** for millisecond-scale top‑k on large corpora instead of a full linear scan. High level: install extension on the API host, migrate `clue_embeddings` BLOBs into vec format, replace chunked scan with `vec_distance` / KNN SQL, rebuild index after bulk embeds. Best when chunked search feels too slow at full archive scale; more deploy work than chunked scan but much faster queries once indexed.
 
 ---
 
@@ -242,6 +245,7 @@ The `web/` app is a Vite + React + Tailwind SPA. It loads random clues from SQLi
 | `JANSWER_DB` | Optional. Absolute or relative path to the SQLite file. If unset, the API uses `j-answer.db` in the **repository root** (same default as the CLI). |
 | `OPENAI_API_KEY` | Required for **Magic** search on the **API process** (see below). Not read by the browser or Vite—only by Uvicorn/`src/semantic_search.py`. |
 | `JANSWER_MAGIC_MIN_SCORE` | Optional. Minimum cosine similarity for Magic results (default `0.45`; UI slider overrides per request). |
+| `JANSWER_MAGIC_BATCH_SIZE` | Optional. Clues per batch during Magic scan (default `20000`; lower if RAM is tight). |
 
 Setting the key for the embed script (`vector-embed.py`) does **not** automatically apply to the API. Use the **same terminal session** (or set the variable in your IDE run configuration) **before** starting Uvicorn, then restart the API if it was already running.
 
@@ -335,7 +339,7 @@ End goal: a web-based, Quizlet-style experience over the full J-Archive-derived 
 | **2** | Core flashcard UI | Random clue, flip animation, Jeopardy-style presentation — **done** |
 | **3** | Search & filtering | Multi-tag AND search, result list → card; FTS-backed — **done** for MVP (pagination, highlights, round/date filters later) |
 | **4** | AI categorization | Batch LLM pass to fill `ai_category` / `ai_subcategory` from a controlled taxonomy; storage and re-runs |
-| **5** | Smarter search | Magic vibe search + `clue_embeddings` (batch embed in `embed/`); local query embedding (no search-time API); hybrid with FTS / tuning later |
+| **5** | Smarter search | Magic vibe search + chunked scan over `clue_embeddings`; sqlite-vec ANN + local query embedding later; hybrid with FTS |
 | **6** | Statistics & taxonomy UI | Hierarchy by AI categories, counts per node, “study this bucket” random sessions |
 
 Principles: iterate in phases; keep scraping and persistence separate from the UI; call out J-Archive rate limits and HTML quirks early; keep interactions snappy and mobile-friendly.
