@@ -32,26 +32,23 @@ _openai_singleton: openai.OpenAI | None = None
 
 log = logging.getLogger(__name__)
 
-_CLUE_SELECT = """
-    c.id,
-    c.jarchive_game_id,
-    c.air_date,
-    c.round,
-    c.game_category,
-    c.value_display,
-    c.value_amount,
-    c.is_daily_double,
-    c.clue_text,
-    c.answer_text
+_CLUE_COLUMNS = """
+    id,
+    jarchive_game_id,
+    air_date,
+    round,
+    game_category,
+    value_display,
+    value_amount,
+    is_daily_double,
+    clue_text,
+    answer_text
 """
 
-_KNN_SQL = f"""
-    SELECT
-        {_CLUE_SELECT},
-        v.distance AS vec_distance
-    FROM {VEC_TABLE} AS v
-    INNER JOIN clues AS c ON c.id = v.clue_id
-    WHERE v.embedding MATCH ?
+_KNN_VEC_ONLY_SQL = f"""
+    SELECT clue_id, distance
+    FROM {VEC_TABLE}
+    WHERE embedding MATCH ?
       AND k = ?
 """
 
@@ -133,29 +130,69 @@ def _search_vec_knn(
     limit: int,
     min_score: float,
 ) -> list[tuple[dict[str, Any], float]]:
+    """
+    Two-phase KNN: vec0 MATCH only, then clues lookup by id.
+
+    JOIN inside the MATCH query has been observed to hang on some linux/arm +
+    sqlite-vec builds at large scale; splitting keeps plans simple.
+    """
     if limit <= 0:
         return []
 
     k = _knn_limit(limit)
     max_distance = 1.0 - min_score
-    rows = conn.execute(_KNN_SQL, (query_blob, k)).fetchall()
+    vec_rows = conn.execute(_KNN_VEC_ONLY_SQL, (query_blob, k)).fetchall()
+
+    picked: list[tuple[int, float]] = []
+    for row in vec_rows:
+        distance = float(row["distance"])
+        if distance > max_distance:
+            continue
+        picked.append((int(row["clue_id"]), distance))
+        if len(picked) >= limit:
+            break
+
+    if not picked:
+        return []
+
+    clue_ids = [cid for cid, _ in picked]
+    placeholders = ",".join("?" * len(clue_ids))
+    clue_sql = f"""
+        SELECT {_CLUE_COLUMNS}
+        FROM clues
+        WHERE id IN ({placeholders})
+    """
+    clue_rows = conn.execute(clue_sql, clue_ids).fetchall()
+    by_id = {int(r["id"]): r for r in clue_rows}
 
     hits: list[tuple[dict[str, Any], float]] = []
-    for row in rows:
-        distance = float(row["vec_distance"])
-        if distance > max_distance:
+    for cid, distance in picked:
+        row = by_id.get(cid)
+        if row is None:
             continue
         score = _distance_to_score(distance)
         hits.append((row_to_clue_dict(row), score))
-        if len(hits) >= limit:
-            break
     return hits
 
 
 def get_openai_client() -> openai.OpenAI:
     global _openai_singleton
     if _openai_singleton is None:
-        _openai_singleton = openai.OpenAI()
+        timeout_s = 45.0
+        raw_t = os.environ.get("JANSWER_OPENAI_TIMEOUT_SEC", "").strip()
+        if raw_t:
+            try:
+                timeout_s = max(5.0, float(raw_t))
+            except ValueError:
+                pass
+        retries = 2
+        raw_r = os.environ.get("JANSWER_OPENAI_MAX_RETRIES", "").strip()
+        if raw_r:
+            try:
+                retries = max(0, min(10, int(raw_r)))
+            except ValueError:
+                pass
+        _openai_singleton = openai.OpenAI(timeout=timeout_s, max_retries=retries)
     return _openai_singleton
 
 
