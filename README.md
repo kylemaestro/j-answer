@@ -164,6 +164,60 @@ python -m janswer season 1
 - **Schema** is created on first run (`init_schema` in `src/db.py`).
 - **Full-text search:** `clues_fts` (FTS5), kept in sync with `clues` via triggers.
 - **Crawl queue:** `crawl_games` (schema version 2).
+- **Semantic embeddings (optional):** `clue_embeddings` — one vector per clue for vibe / topic search (see below). Format contract lives in `src/embeddings.py`.
+
+---
+
+## Vector embeddings (optional, local)
+
+For semantic “vibe” search (e.g. “US presidents”, “18th century European artists”), you can precompute OpenAI embeddings into the same SQLite file. This is a **one-time local job**; stop the API first if it is using the DB.
+
+### Setup
+
+```bash
+pip install -r embed/requirements-embed.txt
+```
+
+Set your API key (never commit it):
+
+```powershell
+$env:OPENAI_API_KEY = "sk-..."
+```
+
+### Run
+
+From the repository root (or `embed/`; default DB is `j-answer.db` at the repo root):
+
+```bash
+python embed/vector-embed.py
+```
+
+Smoke-test on a small batch before a full run:
+
+```bash
+python embed/vector-embed.py --limit 100
+```
+
+| Flag | Default | Description |
+| ---- | ------- | ----------- |
+| `--db` | `j-answer.db` (repo root) | SQLite path |
+| `--batch-size` | `1000` | Clues per OpenAI request |
+| `--limit` | `0` (no cap) | Max clues to embed this run |
+| `--retries` | `5` | Attempts per batch on 429 / 5xx / connection errors |
+| `--backoff-base` | `2.0` | Seconds before first retry (doubles each attempt) |
+| `-v` | off | Debug logging |
+
+The script is **resumable**: only clues missing from `clue_embeddings` are processed. Progress logs use counts from the start of the run plus rows embedded this session (no full-table recount after every batch).
+
+### Outcome
+
+- **Table:** `clue_embeddings` (`clue_id` → `clues.id`, `ON DELETE CASCADE`, `embedding` BLOB).
+- **Does not modify** the `clues` table.
+- **Per-clue text embedded:** `game_category | clue_text | answer_text` (same string shape at query time for search).
+- **Storage:** `text-embedding-3-small`, **512** dimensions, raw **float32** little-endian bytes (~2 KB per clue). Details: `src/embeddings.py`.
+- **Scale:** a full archive is on the order of **~1 GB** of vectors plus OpenAI token charges; use `--limit` to validate first.
+
+Semantic search in the API/UI is not wired up yet; embeddings are the persistence layer for a future phase (cosine similarity, score thresholds, FTS hybrid).
 
 ---
 
@@ -249,7 +303,7 @@ End goal: a web-based, Quizlet-style experience over the full J-Archive-derived 
 | **2** | Core flashcard UI | Random clue, flip animation, Jeopardy-style presentation — **done** |
 | **3** | Search & filtering | Multi-tag AND search, result list → card; FTS-backed — **done** for MVP (pagination, highlights, round/date filters later) |
 | **4** | AI categorization | Batch LLM pass to fill `ai_category` / `ai_subcategory` from a controlled taxonomy; storage and re-runs |
-| **5** | Smarter search | Semantic or embedding-backed search so intent (e.g. “first U.S. presidents”) matches clues without literal phrase overlap |
+| **5** | Smarter search | Semantic / embedding-backed search (vectors in `clue_embeddings`; batch job in `embed/`) — **storage in progress**; API search TBD |
 | **6** | Statistics & taxonomy UI | Hierarchy by AI categories, counts per node, “study this bucket” random sessions |
 
 Principles: iterate in phases; keep scraping and persistence separate from the UI; call out J-Archive rate limits and HTML quirks early; keep interactions snappy and mobile-friendly.
@@ -271,6 +325,10 @@ src/
   parser.py
   scraper.py
   search.py         # FTS5 multi-tag search helpers
+  embeddings.py     # clue_embeddings BLOB format + schema helpers
+embed/
+  vector-embed.py   # local batch embed job (OpenAI)
+  requirements-embed.txt
 web/                # Vite + React flashcard SPA
 deploy/             # nginx + systemd examples for production
 docs/               # AWS deployment (EC2, CloudFormation) — see docs/aws.md

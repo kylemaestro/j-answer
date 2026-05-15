@@ -118,6 +118,14 @@ Commands below assume **Amazon Linux 2023**. Paths start at the **root of the di
 
 **Windows (PowerShell):** `rsync` is usually not installed. This guide uses **`git clone` / `git pull` on the EC2 host** and builds the SPA **on the server** with **`npm`**. For **`j-answer.db`**, **`scp`** (OpenSSH client on Windows) still works from your PC.
 
+### Ship code changes + restart the API (Session Manager or SSH)
+
+Use **EC2 → Instances → your instance → Connect → Session Manager** (or SSH). If you land as **`ssm-user`**, switch to **`ec2-user`** first (**`sudo -u ec2-user -i`**) so you can write under **`/opt/j-answer/app`**.
+
+1. **Pull and rebuild** — run the full **§4.2** block under *Routine updates (`git pull`)* (`git pull`, `npm ci` / `npm run build`, copy `web/dist` to `/opt/j-answer/web/dist/`, `pip install -r requirements.txt`). If you only changed **Python** (no `web/` edits), you can omit the **`npm`** / **`cp dist`** lines and still run **`pip install`**.
+2. **Restart Uvicorn** — `sudo systemctl restart janswer-api`
+3. **Sanity check** — `curl -sS http://127.0.0.1:8000/api/health` (see §4.6). If something fails: `sudo systemctl status janswer-api --no-pager` and `sudo journalctl -u janswer-api -n 80 --no-pager`.
+
 ### 4.1 Application code (`git clone` on the server)
 
 **What “UserData already created” means:** On **first boot**, AWS ran the template’s **UserData** script (you do not run it yourself). It should have created **`/opt/j-answer/app`**, **`/opt/j-answer/data`**, **`/opt/j-answer/web/dist`**, and set ownership to **`ec2-user`**.

@@ -1,0 +1,2 @@
+- When pressing I'm Feeling Lucky with an answer already revealed, the new answer is visible for a moment before the card fully flips to the new clue
+- Image clues from J-Archive are stored as text/HTML references but not rendered in the flashcard UI; some rows may be poor candidates for study until we support images (or filter/delete them)
