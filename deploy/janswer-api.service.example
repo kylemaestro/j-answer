@@ -1,7 +1,9 @@
-# Install: sudo cp deploy/janswer-api.service.example /etc/systemd/system/janswer-api.service
-# sudo systemctl daemon-reload && sudo systemctl enable --now janswer-api
+# Installed by deploy/bootstrap.sh as /etc/systemd/system/janswer-api.service.
+# Manual install: sudo cp deploy/janswer-api.service.example /etc/systemd/system/janswer-api.service
+#                 sudo systemctl daemon-reload && sudo systemctl enable --now janswer-api
 #
-# Adjust User/Group and paths if needed.
+# Secrets and per-host overrides live in /etc/janswer.env (mode 0640, root:ec2-user),
+# which is written by bootstrap.sh. Keys set there take precedence over Environment= below.
 
 [Unit]
 Description=j-answer FastAPI (uvicorn)
@@ -12,8 +14,12 @@ Type=simple
 User=ec2-user
 Group=ec2-user
 WorkingDirectory=/opt/j-answer/app
+
+# Defaults — overridden per-host by /etc/janswer.env if present.
 Environment=JANSWER_DB=/opt/j-answer/data/j-answer.db
 Environment=CORS_ORIGINS=https://j-answer.kylemeister.dev
+EnvironmentFile=-/etc/janswer.env
+
 ExecStart=/opt/j-answer/app/venv/bin/python -m uvicorn src.api_app:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5

@@ -9,3 +9,6 @@ web/dist/
 
 # Local-only parameterized EC2 lab template (not committed)
 personal-kylemeister-apps-ec2.yaml
+
+# Laptop deploy config (may contain paths; copy from deploy-stack.env.example)
+deploy/deploy-stack.env

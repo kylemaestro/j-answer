@@ -175,6 +175,56 @@ def _search_vec_knn(
     return hits
 
 
+def warm_magic_index(db_path: str) -> dict[str, object]:
+    """
+    Touch every page of the sqlite-vec flat index to pull it into OS page cache.
+
+    Issues a dummy KNN against a zero vector (k=1) — flat indexes scan all rows
+    regardless of k, so this forces the working set into memory without making
+    any OpenAI calls. Called once at API startup (see ``src/api_app.py`` lifespan)
+    so the first real Magic search after a deploy doesn't pay the ~1 GB EBS read.
+
+    Returns a small diagnostic dict for logging. Never raises — pre-warm is
+    best-effort; a missing DB or vec index should not block the API from starting.
+    """
+    info: dict[str, object] = {"ok": False, "reason": "unknown"}
+    if not os.path.isfile(db_path):
+        info["reason"] = "db_missing"
+        return info
+    from src.db import connect
+
+    conn = None
+    try:
+        conn = connect(db_path)
+        if not vec_index_table_exists(conn):
+            info["reason"] = "vec_index_missing"
+            return info
+        load_sqlite_vec(conn)
+        indexed = count_vec_index(conn)
+        if indexed == 0:
+            info["reason"] = "vec_index_empty"
+            info["indexed"] = 0
+            return info
+        zero_blob = np.zeros(EMBEDDING_DIMENSIONS, dtype=np.float32).tobytes()
+        t0 = time.perf_counter()
+        conn.execute(
+            f"SELECT clue_id FROM {VEC_TABLE} WHERE embedding MATCH ? AND k = ?",
+            (zero_blob, 1),
+        ).fetchall()
+        ms = (time.perf_counter() - t0) * 1000.0
+        info.update(ok=True, reason="warmed", indexed=indexed, scan_ms=round(ms, 1))
+        return info
+    except Exception as exc:
+        info["reason"] = f"error: {exc!r}"
+        return info
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
 def get_openai_client() -> openai.OpenAI:
     global _openai_singleton
     if _openai_singleton is None:

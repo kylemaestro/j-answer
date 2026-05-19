@@ -1,8 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >
-  Minimal single EC2 instance for j-answer (nginx + FastAPI + SQLite).
-  Uses default VPC. For production hardening, restrict SSH (port 22) or disable
-  it and use AWS Systems Manager Session Manager after bootstrap.
+  Single EC2 instance for j-answer (nginx + FastAPI + SQLite).
+  UserData installs base packages, creates the layout under /opt/j-answer, sets up
+  a swap file, and clones the repo. App-level setup (venv, frontend build, systemd,
+  nginx, certbot, OpenAI key) is handled by `deploy/bootstrap.sh` after the database
+  has been uploaded — see docs/aws.md.
 
 Parameters:
   VpcId:
@@ -22,8 +24,33 @@ Parameters:
 
   InstanceType:
     Type: String
-    Default: t4g.micro
-    Description: ARM (t4g.*) or use t3.micro for x86 free-tier eligible in some accounts.
+    Default: t4g.small
+    Description: >
+      Default t4g.small (2 GB RAM) keeps the ~1 GB sqlite-vec flat index in OS page
+      cache so Magic search isn't I/O-bound. t4g.micro (1 GB) is not enough headroom
+      and will time out under load. t4g.medium gives room for more concurrent users.
+
+  RootVolumeSizeGiB:
+    Type: Number
+    Default: 16
+    MinValue: 12
+    Description: >
+      Size of the root EBS volume (gp3). The default 8 GB on AL2023 is too tight once
+      the ~3.7 GB SQLite DB, the Python venv, node_modules, and a swap file are added.
+      16 GB gives comfortable headroom for a few cents/month.
+
+  RepoUrl:
+    Type: String
+    Default: https://github.com/kylemaestro/j-answer.git
+    Description: >
+      Public Git URL to clone into /opt/j-answer/app during UserData. Override if you
+      maintain a fork. For private repos: leave default empty and clone manually after
+      bootstrap (or embed a deploy key — out of scope for this template).
+
+  RepoRef:
+    Type: String
+    Default: main
+    Description: Branch or tag to check out after cloning RepoUrl.
 
   KeyName:
     Type: String
@@ -35,13 +62,13 @@ Parameters:
     Default: "true"
     AllowedValues: ["true", "false"]
     Description: >
-      If true, security group allows SSH (22) from 0.0.0.0/0 for GitHub Actions / home setup.
-      Set false after switching to SSM-only or a VPN; then manage deploy another way.
+      If true, security group allows SSH (22) from 0.0.0.0/0 for GitHub Actions / scp
+      uploads. Set false after switching to SSM-only or a VPN; then manage deploy another way.
 
   LatestAmiId:
     Type: "AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>"
     Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-arm64
-    Description: SSM parameter for Amazon Linux 2023 AMI (arm64). For t3.micro use the x86_64 path in console or override.
+    Description: SSM parameter for Amazon Linux 2023 AMI (arm64). For x86 instance types override with the x86_64 path.
 
   HostedZoneId:
     Type: String
@@ -62,6 +89,7 @@ Conditions:
   OpenSSH: !Equals [!Ref AllowSSHFromInternet, "true"]
   CreateDnsRecord: !Not [!Equals [!Ref HostedZoneId, ""]]
   UseExplicitSubnet: !Not [!Equals [!Ref SubnetId, ""]]
+  HasRepoUrl: !Not [!Equals [!Ref RepoUrl, ""]]
 
 Resources:
   InstanceRole:
@@ -116,7 +144,7 @@ Resources:
       FromPort: 22
       ToPort: 22
       CidrIp: 0.0.0.0/0
-      Description: SSH for bootstrap / GitHub Actions (restrict in production)
+      Description: SSH for bootstrap / scp uploads / GitHub Actions (restrict in production)
 
   ElasticIP:
     Type: AWS::EC2::EIP
@@ -136,25 +164,65 @@ Resources:
       SubnetId: !If [UseExplicitSubnet, !Ref SubnetId, !Ref "AWS::NoValue"]
       SecurityGroupIds:
         - !Ref AppSecurityGroup
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: !Ref RootVolumeSizeGiB
+            DeleteOnTermination: true
+            Encrypted: true
       Tags:
         - Key: Name
           Value: j-answer-app
         - Key: Project
           Value: j-answer
       UserData:
-        Fn::Base64: !Sub |
-          #!/bin/bash
-          set -euo pipefail
-          # Create layout first so /opt/j-answer exists even if a package name changes on some AMIs/arch.
-          mkdir -p /opt/j-answer/{app,data,web/dist}
-          chown -R ec2-user:ec2-user /opt/j-answer
-          dnf update -y
-          # Do not install python3-venv here: on several AL2023 ARM builds that RPM name is missing and dnf
-          # aborts the whole script (set -e), skipping the mkdir above if it were ordered later.
-          # python3 + pip are enough for `python3 -m venv` on stock AL2023 system Python 3.9.
-          dnf install -y nginx python3 python3-pip git
-          systemctl enable --now nginx
-          echo "Bootstrap done. Deploy app + TLS per docs/aws.md (certbot, systemd)."
+        Fn::Base64: !Sub
+          - |
+            #!/bin/bash
+            # j-answer UserData: install base packages, lay out /opt/j-answer, swap, clone repo.
+            # App-level setup (venv, npm build, systemd, nginx, certbot) lives in deploy/bootstrap.sh.
+            set -euo pipefail
+            LOG=/var/log/janswer-userdata.log
+            exec > >(tee -a "$LOG") 2>&1
+            echo "[$(date -Is)] UserData starting (RepoUrl=${RepoUrlValue} RepoRef=${RepoRefValue})"
+
+            # Base packages. nodejs20 covers the Vite 6 / React 19 requirement;
+            # certbot is installed here so bootstrap.sh can run TLS without an extra dnf round-trip.
+            dnf update -y
+            dnf install -y nginx python3 python3-pip git certbot python3-certbot-nginx nodejs20 || \
+              dnf install -y nginx python3 python3-pip git certbot python3-certbot-nginx nodejs
+
+            # 1 GiB swapfile — insurance against transient memory pressure (cold cache warmups,
+            # concurrent Magic queries). Cheap and reversible.
+            if [ ! -f /swapfile ]; then
+              fallocate -l 1G /swapfile
+              chmod 600 /swapfile
+              mkswap /swapfile
+              swapon /swapfile
+              grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab
+            fi
+
+            # Directory layout owned by ec2-user (the systemd unit's User=).
+            mkdir -p /opt/j-answer/app /opt/j-answer/data /opt/j-answer/web/dist
+            chown -R ec2-user:ec2-user /opt/j-answer
+
+            # Clone the repo if a URL was provided and the dir is empty.
+            REPO_URL='${RepoUrlValue}'
+            REPO_REF='${RepoRefValue}'
+            if [ -n "$REPO_URL" ] && [ ! -d /opt/j-answer/app/.git ]; then
+              rm -rf /opt/j-answer/app
+              sudo -u ec2-user git clone --branch "$REPO_REF" "$REPO_URL" /opt/j-answer/app
+            fi
+
+            systemctl enable --now nginx
+
+            echo "[$(date -Is)] UserData done. Next steps (see docs/aws.md):"
+            echo "  1) Point DNS at the Elastic IP and wait for resolution"
+            echo "  2) scp your j-answer.db to /opt/j-answer/data/j-answer.db"
+            echo "  3) sudo /opt/j-answer/app/deploy/bootstrap.sh --domain <fqdn> --email <you@example.com>"
+          - RepoUrlValue: !Ref RepoUrl
+            RepoRefValue: !Ref RepoRef
 
   EIPAssociation:
     Type: AWS::EC2::EIPAssociation
@@ -187,3 +255,9 @@ Outputs:
   SshHint:
     Description: SSH (if key + SG allow)
     Value: !Sub "ssh -i your.pem ec2-user@${ElasticIP}"
+  ScpDbHint:
+    Description: Upload the SQLite DB to the instance (after SSH key install or with --key)
+    Value: !Sub "scp -i your.pem ./j-answer.db ec2-user@${ElasticIP}:/opt/j-answer/data/j-answer.db"
+  BootstrapHint:
+    Description: One-shot setup once UserData has finished and the DB is uploaded
+    Value: !Sub "sudo /opt/j-answer/app/deploy/bootstrap.sh --domain ${DnsRecordName} --email you@example.com"

@@ -85,12 +85,39 @@ CREATE INDEX IF NOT EXISTS idx_crawl_games_status ON crawl_games(status);
 """
 
 
+# PRAGMAs applied to every connection. Tuned for the Magic-search hot path:
+# a ~1 GB sqlite-vec flat index that we want to stay in OS page cache after
+# the first warm-up. See docs/aws.md for the t4g.small reasoning.
+#
+# mmap_size: max bytes SQLite may memory-map. Doesn't allocate RAM up front —
+#   Linux pages content in on first access. 2 GiB covers the vec index + a
+#   healthy chunk of clue_embeddings on a 2 GB instance without risking 32-bit
+#   limits (we're 64-bit ARM/x86 on AL2023).
+# cache_size: SQLite's own page cache in KiB (negative value). 64 MiB is
+#   generous for the page-touching pattern of a flat KNN scan but small enough
+#   that the OS page cache still gets most of the RAM.
+# temp_store: keep temporary indexes/sorts in RAM (avoids spilling to /tmp).
+# synchronous=NORMAL: safe pairing with WAL; ~1 fsync per checkpoint instead
+#   of per write. We don't do high-volume writes from the API.
+# journal_mode=WAL: persistent, set once and survives. Lets the scraper (or
+#   `vector-embed.py`) write while the API reads. Idempotent on re-set.
+_CONNECTION_PRAGMAS: tuple[str, ...] = (
+    "PRAGMA foreign_keys = ON",
+    "PRAGMA journal_mode = WAL",
+    "PRAGMA synchronous = NORMAL",
+    "PRAGMA temp_store = MEMORY",
+    "PRAGMA cache_size = -65536",
+    "PRAGMA mmap_size = 2147483648",
+)
+
+
 def connect(db_path: str | Path) -> sqlite3.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), factory=JAnswerConnection)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+    for pragma in _CONNECTION_PRAGMAS:
+        conn.execute(pragma)
     return conn
 
 

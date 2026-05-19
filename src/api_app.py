@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sqlite3
+from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import AsyncIterator, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,6 +21,7 @@ from src.semantic_search import (
     embeddings_status_details,
     magic_min_score,
     search_clues_by_vibe,
+    warm_magic_index,
 )
 
 log = logging.getLogger(__name__)
@@ -49,7 +52,40 @@ def _cors_origins() -> List[str]:
     return base
 
 
-app = FastAPI(title="j-answer API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """
+    Pre-warm the sqlite-vec flat index in a background thread on startup.
+
+    On t4g.small (2 GB RAM) the ~1 GB index lives comfortably in OS page cache
+    once it has been touched once, but the first read after deploy/reboot still
+    has to pull it off EBS — that's the ~10 s cold-start that would otherwise
+    hit the first user. Running the warm in a thread keeps /api/health
+    responsive immediately; Uvicorn doesn't wait for the scan to finish.
+    """
+    db_path = _db_path()
+
+    def _warm() -> None:
+        result = warm_magic_index(db_path)
+        if result.get("ok"):
+            log.info(
+                "magic_prewarm ok indexed=%s scan_ms=%s",
+                result.get("indexed"),
+                result.get("scan_ms"),
+            )
+        else:
+            log.info("magic_prewarm skipped reason=%s", result.get("reason"))
+
+    try:
+        loop = asyncio.get_running_loop()
+        loop.run_in_executor(None, _warm)
+    except Exception as exc:
+        log.warning("magic_prewarm dispatch failed: %s", exc)
+
+    yield
+
+
+app = FastAPI(title="j-answer API", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
