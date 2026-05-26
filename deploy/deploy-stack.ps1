@@ -37,7 +37,7 @@ $SshKeyPath = if ($env:SSH_KEY_PATH) { $env:SSH_KEY_PATH } else { "$env:USERPROF
 $InstanceType = if ($env:INSTANCE_TYPE) { $env:INSTANCE_TYPE } else { "t4g.small" }
 $RootVolumeGib = if ($env:ROOT_VOLUME_GIB) { $env:ROOT_VOLUME_GIB } else { "16" }
 $RepoUrl = if ($env:REPO_URL) { $env:REPO_URL } else { "https://github.com/kylemaestro/j-answer.git" }
-$RepoRef = if ($env:REPO_REF) { $env:REPO_REF } else { "main" }
+$RepoRef = if ($env:REPO_REF) { $env:REPO_REF } else { "master" }
 $AllowSsh = if ($env:ALLOW_SSH_FROM_INTERNET) { $env:ALLOW_SSH_FROM_INTERNET } else { "true" }
 $UploadDb = ($env:UPLOAD_DB -eq "true") -or ($env:UPLOAD_DB -eq "1")
 

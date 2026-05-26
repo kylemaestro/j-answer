@@ -49,8 +49,10 @@ Parameters:
 
   RepoRef:
     Type: String
-    Default: main
-    Description: Branch or tag to check out after cloning RepoUrl.
+    Default: master
+    Description: >
+      Branch or tag to check out after cloning RepoUrl. Must exist on the remote
+      (this repo uses master, not main — a wrong branch makes UserData clone fail).
 
   KeyName:
     Type: String

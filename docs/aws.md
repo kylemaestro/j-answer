@@ -102,7 +102,7 @@ aws cloudformation deploy \
 | `InstanceType` | `t4g.small` | Don't drop to `t4g.micro` — Magic search will time out (see **Performance notes**). |
 | `RootVolumeSizeGiB` | `16` | Holds AL2023 + the ~3.7 GB DB + venv + node_modules + 1 GB swap with room to grow. |
 | `RepoUrl` | `https://github.com/kylemaestro/j-answer.git` | Cloned during UserData into `/opt/j-answer/app`. Override for a fork. |
-| `RepoRef` | `main` | Branch/tag to check out after clone. |
+| `RepoRef` | `master` | Branch/tag to check out after clone (must exist on GitHub). |
 | `HostedZoneId` | _(empty)_ | Optional — if `kylemeister.dev` is in Route 53 in **this** account, set this and CloudFormation auto-creates the `j-answer` A record. Otherwise add it at GoDaddy (§3). |
 | `DnsRecordName` | `j-answer.kylemeister.dev` | FQDN used both for the Route 53 record (when enabled) and as the default `--domain` value for bootstrap. |
 | `AllowSSHFromInternet` | `true` | Opens port 22 so you can `scp` the database. Flip to `false` once you've finished bootstrapping and prefer SSM-only. |
@@ -228,7 +228,7 @@ The first **Magic** search after a deploy still has to pull ~1 GB of vec index o
 
 ## 6. Routine updates
 
-After you push to `main`:
+After you push to `master`:
 
 ```bash
 sudo /opt/j-answer/app/deploy/bootstrap.sh --domain j-answer.kylemeister.dev
@@ -255,11 +255,34 @@ sudo systemctl start janswer-api   # the lifespan hook pre-warms the new index
 
 ## 7. Troubleshooting
 
-**UserData didn't finish / `/opt/j-answer/app` is missing.** Inspect `/var/log/janswer-userdata.log` (also written to `/var/log/cloud-init-output.log`). Common causes: GitHub clone failed (typo in `RepoUrl`, private repo without auth), or `dnf install nodejs20` failed on an older AMI snapshot. You can fix the root cause and rerun manually:
+**`bootstrap.sh: command not found` or `/opt/j-answer/app/deploy/bootstrap.sh` missing.** UserData clones `RepoRef` (default **`master`** — not `main`). If the stack was deployed with `RepoRef=main` but GitHub only has `master`, the clone failed and the app tree is empty. On the instance:
+
+```bash
+sudo tail -n 30 /var/log/janswer-userdata.log
+ls -la /opt/j-answer/app/deploy/bootstrap.sh   # should exist
+
+# Fix: clone or sync master
+sudo rm -rf /opt/j-answer/app
+sudo -u ec2-user git clone --branch master https://github.com/kylemaestro/j-answer.git /opt/j-answer/app
+sudo chmod +x /opt/j-answer/app/deploy/bootstrap.sh
+```
+
+If `/opt/j-answer/app` is already a git repo but behind:
+
+```bash
+sudo -u ec2-user git -C /opt/j-answer/app fetch origin master
+sudo -u ec2-user git -C /opt/j-answer/app checkout master
+sudo -u ec2-user git -C /opt/j-answer/app pull --ff-only
+sudo chmod +x /opt/j-answer/app/deploy/bootstrap.sh
+```
+
+Then run bootstrap again (§5).
+
+**UserData didn't finish / `/opt/j-answer/app` is missing.** Inspect `/var/log/janswer-userdata.log` (also written to `/var/log/cloud-init-output.log`). Common causes: GitHub clone failed (wrong `RepoRef`, typo in `RepoUrl`, private repo without auth), or `dnf install nodejs20` failed on an older AMI snapshot. You can fix the root cause and rerun manually:
 
 ```bash
 sudo dnf install -y nginx python3 python3-pip git certbot python3-certbot-nginx nodejs20
-sudo -u ec2-user git clone --branch main https://github.com/kylemaestro/j-answer.git /opt/j-answer/app
+sudo -u ec2-user git clone --branch master https://github.com/kylemaestro/j-answer.git /opt/j-answer/app
 ```
 
 **`502 Bad Gateway` from nginx on `/api/*`.** Means Uvicorn isn't answering on `127.0.0.1:8000`. Inspect:

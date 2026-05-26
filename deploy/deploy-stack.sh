@@ -34,7 +34,7 @@ SSH_KEY_PATH="${SSH_KEY_PATH:-$HOME/.ssh/id_ed25519}"
 INSTANCE_TYPE="${INSTANCE_TYPE:-t4g.small}"
 ROOT_VOLUME_GIB="${ROOT_VOLUME_GIB:-16}"
 REPO_URL="${REPO_URL:-https://github.com/kylemaestro/j-answer.git}"
-REPO_REF="${REPO_REF:-main}"
+REPO_REF="${REPO_REF:-master}"
 ALLOW_SSH_FROM_INTERNET="${ALLOW_SSH_FROM_INTERNET:-true}"
 UPLOAD_DB="${UPLOAD_DB:-false}"
 
