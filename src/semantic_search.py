@@ -120,13 +120,53 @@ def count_embedded_clues(conn: sqlite3.Connection) -> int:
     return conn.execute("SELECT COUNT(*) FROM clue_embeddings").fetchone()[0]
 
 
+def has_embeddings(conn: sqlite3.Connection) -> bool:
+    """Cheap existence check (no full COUNT(*) scan of clue_embeddings)."""
+    if not embeddings_table_exists(conn):
+        return False
+    return conn.execute("SELECT 1 FROM clue_embeddings LIMIT 1").fetchone() is not None
+
+
+# COUNT(*) over the ~1 GB clue_embeddings table is a full scan (~13 s on EBS).
+# The row count is static between deploys, so cache it keyed by the DB file's
+# (size, mtime) signature. The startup prewarm primes this so no user request
+# pays the scan. The magic hot path uses count_vec_index (fast) instead.
+_embedded_count_cache: dict[str, tuple[tuple[int, int], int]] = {}
+
+
+def _db_signature(db_path: str) -> tuple[int, int] | None:
+    try:
+        st = os.stat(db_path)
+    except OSError:
+        return None
+    return (st.st_size, int(st.st_mtime))
+
+
+def count_embedded_clues_cached(conn: sqlite3.Connection, db_path: str) -> int:
+    """count_embedded_clues with a (size, mtime)-keyed cache to avoid rescans."""
+    sig = _db_signature(db_path)
+    cached = _embedded_count_cache.get(db_path)
+    if cached is not None and sig is not None and cached[0] == sig:
+        return cached[1]
+    n = count_embedded_clues(conn)
+    if sig is not None:
+        _embedded_count_cache[db_path] = (sig, n)
+    return n
+
+
 def vec_index_ready(conn: sqlite3.Connection) -> bool:
     return not vec_index_needs_rebuild(conn)
 
 
-def embeddings_status_details(conn: sqlite3.Connection) -> dict[str, object]:
+def embeddings_status_details(
+    conn: sqlite3.Connection, db_path: str | None = None
+) -> dict[str, object]:
     """Diagnostics for /api/embeddings/status."""
-    embedded = count_embedded_clues(conn)
+    embedded = (
+        count_embedded_clues_cached(conn, db_path)
+        if db_path
+        else count_embedded_clues(conn)
+    )
     sqlite_vec_version: str | None = None
     sqlite_vec_error: str | None = None
     indexed = 0
@@ -301,7 +341,16 @@ def warm_magic_index(db_path: str) -> dict[str, object]:
             (zero_blob, 1),
         ).fetchall()
         ms = (time.perf_counter() - t0) * 1000.0
-        info.update(ok=True, reason="warmed", indexed=indexed, scan_ms=round(ms, 1))
+        # Prime the embedded-count cache (one slow COUNT(*) here, off the
+        # request path) so /api/embeddings/status stays fast for the UI.
+        embedded = count_embedded_clues_cached(conn, db_path)
+        info.update(
+            ok=True,
+            reason="warmed",
+            indexed=indexed,
+            embedded=embedded,
+            scan_ms=round(ms, 1),
+        )
         return info
     except Exception as exc:
         info["reason"] = f"error: {exc!r}"
@@ -384,17 +433,21 @@ def search_clues_by_vibe(
     result_limit = magic_result_limit()
     rerank_pool = magic_rerank_pool()
 
-    if count_embedded_clues(conn) == 0:
-        return [], 0
-
     if not vec_index_ready(conn):
+        # No vec index. Distinguish "no embeddings at all" (empty result) from
+        # "embeddings present but index not built" (actionable error) with a
+        # cheap existence check — never a full COUNT(*) scan.
+        if not has_embeddings(conn):
+            return [], 0
         raise RuntimeError(
             "Magic search index is missing or empty. Run: "
             "python scripts/migrate_vec_index.py --db <your-database>"
         )
 
-    indexed = count_vec_index(conn)
-    pool = min(rerank_pool, indexed) if indexed else 0
+    indexed = count_vec_index(conn)  # fast: vec0 keeps a small shadow table
+    if indexed == 0:
+        return [], 0
+    pool = min(rerank_pool, indexed)
 
     load_sqlite_vec(conn)
     t_embed_start = time.perf_counter()

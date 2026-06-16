@@ -17,13 +17,14 @@ from openai import OpenAIError
 from src.db import connect
 from src.search import normalize_tags, row_to_clue_dict, search_clues_by_tags
 from src.semantic_search import (
-    count_embedded_clues,
     embeddings_status_details,
+    has_embeddings,
     magic_min_score,
     magic_scan_limit_default,
     search_clues_by_vibe,
     warm_magic_index,
 )
+from src.vec_index import count_vec_index
 
 log = logging.getLogger(__name__)
 
@@ -214,7 +215,7 @@ def embeddings_status() -> dict:
         )
     conn = connect(path)
     try:
-        return embeddings_status_details(conn)
+        return embeddings_status_details(conn, db_path=path)
     except sqlite3.OperationalError as e:
         raise HTTPException(
             status_code=503,
@@ -263,8 +264,11 @@ def search_clues_magic(
 
     conn = connect(path)
     try:
-        embedded_pool = count_embedded_clues(conn)
-        if embedded_pool == 0:
+        # Fast: vec0 keeps a small shadow table, so this is ~ms (a COUNT(*) over
+        # the ~1 GB clue_embeddings table would be ~13 s). After migration the
+        # vec index is 1:1 with clue_embeddings, so this is the searchable pool.
+        embedded_pool = count_vec_index(conn)
+        if embedded_pool == 0 and not has_embeddings(conn):
             return {
                 "mode": "magic",
                 "query": query,
