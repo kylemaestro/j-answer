@@ -20,6 +20,7 @@ from src.semantic_search import (
     count_embedded_clues,
     embeddings_status_details,
     magic_min_score,
+    magic_scan_limit_default,
     search_clues_by_vibe,
     warm_magic_index,
 )
@@ -226,7 +227,16 @@ def embeddings_status() -> dict:
 @app.get("/api/search/magic")
 def search_clues_magic(
     q: str = Query(..., min_length=1, description="Natural-language vibe query"),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(
+        magic_scan_limit_default(),
+        ge=1,
+        le=20_000_000,
+        description=(
+            "Max embedding rows to scan (I/O cap). Results are still capped at "
+            "JANSWER_MAGIC_RESULT_LIMIT or 100. Use a lower value on small instances; "
+            "set to embedded_pool size (or higher) for a full-index vec0 scan."
+        ),
+    ),
     min_score: Optional[float] = Query(
         None,
         ge=0.0,
@@ -237,6 +247,8 @@ def search_clues_magic(
     """
     Semantic search over clues present in ``clue_embeddings`` only.
     Requires ``OPENAI_API_KEY`` on the server to embed the query.
+
+    ``limit`` bounds how many vec-index rows are read, not how many clues are returned.
     """
     path = _db_path()
     if not Path(path).is_file():
@@ -257,16 +269,18 @@ def search_clues_magic(
                 "mode": "magic",
                 "query": query,
                 "embedded_pool": 0,
+                "scan_limit": limit,
+                "rows_scanned": 0,
                 "min_score": min_score if min_score is not None else magic_min_score(),
                 "count": 0,
                 "clues": [],
             }
         try:
-            hits = search_clues_by_vibe(
+            hits, rows_scanned = search_clues_by_vibe(
                 conn,
                 path,
                 query,
-                limit=limit,
+                scan_limit=limit,
                 min_score=min_score,
             )
         except ValueError as e:
@@ -297,6 +311,8 @@ def search_clues_magic(
         "mode": "magic",
         "query": query,
         "embedded_pool": embedded_pool,
+        "scan_limit": limit,
+        "rows_scanned": rows_scanned,
         "min_score": min_score if min_score is not None else magic_min_score(),
         "count": len(hits),
         "clues": [{**clue, "score": score} for clue, score in hits],

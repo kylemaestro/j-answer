@@ -238,7 +238,7 @@ python scripts/migrate_vec_index.py --db j-answer.db
 
 The web UI **Magic** mode calls `/api/search/magic` (cosine similarity + score threshold). **Exact** mode keeps FTS tag search unchanged.
 
-**Search-time API usage:** Clue vectors are stored in `clue_embeddings` and indexed in `clue_vec_index`. Each Magic search calls OpenAI **once** to embed the query, then runs a **sqlite-vec KNN** query (`MATCH` + `k`) — fast on small instances (e.g. `t4g.micro`) compared to scanning the full corpus in Python.
+**Search-time API usage:** Clue vectors are stored in `clue_embeddings` and indexed in `clue_vec_index`. Each Magic search calls OpenAI **once** to embed the query, then scores up to **`limit` embedding rows** (default 50k) via a bounded read + numpy cosine, or a full **sqlite-vec** flat KNN when `limit` ≥ the vec index size. Tune `limit` (or `JANSWER_MAGIC_SCAN_LIMIT`) on I/O-bound hosts before re-embedding or moving KNN off-box.
 
 **Future enhancement:** **local query embedding** so Magic search needs no OpenAI call after the batch job (re-embed clues with the same local model so spaces match).
 
@@ -300,7 +300,7 @@ On **Amazon Linux 2023** (e.g. `t4g.micro` from `docs/aws.md`), use **AWS System
    ```bash
    sudo systemctl start janswer-api
    curl -sS "http://127.0.0.1:8000/api/embeddings/status"
-   curl -sS "http://127.0.0.1:8000/api/search/magic?q=US%20presidents&limit=3"
+   curl -sS "http://127.0.0.1:8000/api/search/magic?q=US%20presidents&limit=50000"
    ```
 
 7. **Exit** the session: `exit` twice (ec2-user shell, then SSM).
@@ -341,6 +341,8 @@ The `web/` app is a Vite + React + Tailwind SPA. It loads random clues from SQLi
 | `JANSWER_DB` | Optional. Absolute or relative path to the SQLite file. If unset, the API uses `j-answer.db` in the **repository root** (same default as the CLI). |
 | `OPENAI_API_KEY` | Required for **Magic** search on the **API process** (see below). Not read by the browser or Vite—only by Uvicorn/`src/semantic_search.py`. |
 | `JANSWER_MAGIC_MIN_SCORE` | Optional. Minimum cosine similarity for Magic results (default `0.45`; UI slider overrides per request). |
+| `JANSWER_MAGIC_SCAN_LIMIT` | Optional. Default `limit` for Magic search: max embedding rows to scan per query (default `50000`). Lower on I/O-bound hosts; set ≥ `embedded_pool` for a full vec0 scan. |
+| `JANSWER_MAGIC_RESULT_LIMIT` | Optional. Max clues returned per Magic query (default `100`, max `500`). |
 
 Setting the key for the embed script (`vector-embed.py`) does **not** automatically apply to the API. Use the **same terminal session** (or set the variable in your IDE run configuration) **before** starting Uvicorn, then restart the API if it was already running.
 
@@ -389,7 +391,7 @@ Endpoints used by the UI:
 | `GET` | `/api/health` | Liveness check |
 | `GET` | `/api/random-clue` | One random clue |
 | `GET` | `/api/search?tag=a&tag=b` | **Exact** full-text search; repeat `tag` for each term (AND). Optional `limit` (1–500, default 100). |
-| `GET` | `/api/search/magic?q=...` | **Magic** semantic search over clues in `clue_embeddings` only. Requires `OPENAI_API_KEY` on the API host. Optional `limit`, `min_score` (default `0.45` or `JANSWER_MAGIC_MIN_SCORE`). |
+| `GET` | `/api/search/magic?q=...` | **Magic** semantic search over clues in `clue_embeddings` only. Requires `OPENAI_API_KEY` on the API host. Optional `limit` = max embedding **rows to scan** (default `50000` or `JANSWER_MAGIC_SCAN_LIMIT`; raise toward `embedded_pool` for full-index search), `min_score` (default `0.45` or `JANSWER_MAGIC_MIN_SCORE`). Response includes `rows_scanned` and `scan_limit`. |
 | `GET` | `/api/embeddings/status` | `embedded`, `vec_indexed`, and `magic_available` (both BLOBs and vec index must be present). |
 
 **CORS:** Local Vite origins are always allowed. For production hosting behind another hostname or split origins, set **`CORS_ORIGINS`** (comma-separated) in the API environment; same-origin nginx + `/api` proxy usually does not require changes. See **`docs/aws.md`** if you deploy to AWS.

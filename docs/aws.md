@@ -323,12 +323,14 @@ If `available` is consistently < 200 MB, something else on the box is eating cac
 The Magic search hot path is:
 
 1. Embed the query via OpenAI (`text-embedding-3-small`, 512 dims) — ~0.3–1.5 s network round-trip.
-2. Run a flat (brute-force) cosine KNN over `clue_vec_index` — ~500k × 512 floats = **~1 GB** of vector data scanned per query.
-3. Look up matching `clues` rows by id.
+2. Scan up to `limit` rows from `clue_vec_index` (default **50k** via `JANSWER_MAGIC_SCAN_LIMIT`; set `limit` ≥ `embedded_pool` for a full ~1 GB vec0 flat scan).
+3. Look up matching `clues` rows by id (up to 100 results).
 
 On `t4g.micro` (1 GB RAM), once you subtract the kernel (~150 MB), nginx (~30 MB), and the Python process (~150 MB), you're left with ~600 MB of OS page cache to hold a ~1 GB working set. Every Magic query evicts pages it just loaded. With burstable CPU credits draining and EBS reads competing for I/O bandwidth, queries balloon past nginx's 120 s `proxy_read_timeout`. That's the timeout problem.
 
 On `t4g.small` (2 GB RAM), the index fits in page cache with comfortable headroom. After the first query (which the `lifespan` pre-warm absorbs), every subsequent Magic call is memory-bandwidth-bound (~100–500 ms for the KNN) plus the OpenAI round-trip. No more timeouts.
+
+Tune Magic I/O in prod without redeploying: `curl ".../api/search/magic?q=...&limit=10000"` and watch `rows_scanned` in the JSON plus `magic_search` log lines (`backend=subset_scan` vs `vec0_full`). Lower `limit` until latency is acceptable, then decide whether to raise the default (`JANSWER_MAGIC_SCAN_LIMIT`) or re-embed with smaller vectors.
 
 If you outgrow even `t4g.small` (multiple concurrent users hammering Magic), the next steps in order are:
 
