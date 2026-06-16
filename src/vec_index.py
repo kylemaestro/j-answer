@@ -8,11 +8,18 @@ from typing import Iterable
 import numpy as np
 import sqlite_vec
 
-from src.embeddings import EMBEDDING_BYTES, EMBEDDING_DIMENSIONS, blob_to_embedding
+from src.embeddings import (
+    EMBEDDING_BYTES,
+    EMBEDDING_DIMENSIONS,
+    embedding_to_bit_blob,
+)
 
 VEC_TABLE = "clue_vec_index"
 META_VEC_INDEX_VERSION = "vec_index_version"
-VEC_INDEX_VERSION = "2"
+# v3: binary-quantized (bit[]) hamming index. v2 was float[] cosine, which
+# required reading ~1 GB per query and timed out on small instances. The bit
+# index is ~35 MB (fits in RAM); exact cosine reranking uses clue_embeddings.
+VEC_INDEX_VERSION = "3"
 
 # sqlite_vec.load() twice on the same connection fails with "error during initialization".
 _CONN_VEC_VERSION_ATTR = "_janswer_sqlite_vec_version"
@@ -20,8 +27,7 @@ _CONN_VEC_VERSION_ATTR = "_janswer_sqlite_vec_version"
 _VEC0_DDL = f"""
 CREATE VIRTUAL TABLE {VEC_TABLE} USING vec0(
     clue_id INTEGER PRIMARY KEY,
-    embedding FLOAT[{EMBEDDING_DIMENSIONS}] distance_metric=cosine
-    indexed by flat()
+    embedding bit[{EMBEDDING_DIMENSIONS}]
 );
 """
 
@@ -80,13 +86,9 @@ def count_vec_index(conn: sqlite3.Connection) -> int:
     return conn.execute(f"SELECT COUNT(*) FROM {VEC_TABLE}").fetchone()[0]
 
 
-def normalize_embedding_blob(blob: bytes) -> bytes:
-    """L2-normalize a stored embedding BLOB for cosine distance in vec0."""
-    vec = blob_to_embedding(blob)
-    norm = float(np.linalg.norm(vec))
-    if norm > 0:
-        vec = vec / norm
-    return vec.astype(np.float32).tobytes()
+def bit_quantize_embedding_blob(blob: bytes) -> bytes:
+    """Binary-quantize a stored float embedding BLOB for the bit[] hamming index."""
+    return embedding_to_bit_blob(np.frombuffer(blob, dtype=np.float32))
 
 
 def _ensure_meta(conn: sqlite3.Connection) -> None:
@@ -138,14 +140,14 @@ def upsert_vec_rows(
             raise ValueError(
                 f"clue_id {clue_id}: expected {EMBEDDING_BYTES} bytes, got {len(blob)}"
             )
-        norm_blob = normalize_embedding_blob(blob)
+        bit_blob = bit_quantize_embedding_blob(blob)
         conn.execute(
             f"DELETE FROM {VEC_TABLE} WHERE clue_id = ?",
             (clue_id,),
         )
         conn.execute(
-            f"INSERT INTO {VEC_TABLE} (clue_id, embedding) VALUES (?, ?)",
-            (clue_id, norm_blob),
+            f"INSERT INTO {VEC_TABLE} (clue_id, embedding) VALUES (?, vec_bit(?))",
+            (clue_id, bit_blob),
         )
         n += 1
     if n:

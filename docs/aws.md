@@ -4,7 +4,7 @@ This is the **streamlined** deploy: run one CloudFormation stack, upload your SQ
 
 **Target:** `t4g.small` (2 GB RAM) on Amazon Linux 2023, ARM, behind an Elastic IP, with **nginx** reverse-proxying `/api` to FastAPI/Uvicorn on `127.0.0.1:8000`, the SPA from `web/dist`, the SQLite DB at `/opt/j-answer/data/j-answer.db`, and an `OPENAI_API_KEY` in `/etc/janswer.env` for Magic search.
 
-**Why `t4g.small`, not `t4g.micro`:** Magic search runs a flat (brute-force) KNN over a ~1 GB sqlite-vec index. On `t4g.micro` (1 GB RAM) that index doesn't fit in the OS page cache, so every Magic query re-reads it from EBS and times out. `t4g.small` (2 GB RAM) gives enough page cache to keep the index warm; Magic settles at ~1–2 s per query, dominated by the OpenAI embed call. See **Performance notes** at the bottom for the full reasoning.
+**Why `t4g.small`:** Magic search runs a hamming KNN over a **binary-quantized** sqlite-vec index (~35 MB for the full archive), then reranks a small candidate pool with exact float cosine. The bit index stays in page cache even on a 2 GB box, so Magic settles at well under a second of local work plus the OpenAI embed round-trip. (An earlier design scanned the ~1 GB full-precision index on every query and timed out on `t4g.micro`; binary quantization removed that I/O bottleneck — `t4g.small` is now comfortable headroom rather than a hard floor.) See **Performance notes** at the bottom.
 
 **What you get at the end:** HTTPS site at `https://<your-domain>` with SPA at `/`, API at `/api/*`, Magic search working, idempotent re-deploys via re-running `bootstrap.sh`.
 
@@ -323,14 +323,14 @@ If `available` is consistently < 200 MB, something else on the box is eating cac
 The Magic search hot path is:
 
 1. Embed the query via OpenAI (`text-embedding-3-small`, 512 dims) — ~0.3–1.5 s network round-trip.
-2. Scan up to `limit` rows from `clue_vec_index` (default **50k** via `JANSWER_MAGIC_SCAN_LIMIT`; set `limit` ≥ `embedded_pool` for a full ~1 GB vec0 flat scan).
-3. Look up matching `clues` rows by id (up to 100 results).
+2. Binary-quantize the query and run a **hamming KNN** over `clue_vec_index` (`bit[512]`, ~35 MB) to pick a candidate pool (`JANSWER_MAGIC_RERANK_POOL`, default **1000**).
+3. **Rerank** the pool with exact float32 cosine, reading those ~1000 vectors by id from `clue_embeddings` (~2 MB), and look up matching `clues` rows (up to 100 results).
 
-On `t4g.micro` (1 GB RAM), once you subtract the kernel (~150 MB), nginx (~30 MB), and the Python process (~150 MB), you're left with ~600 MB of OS page cache to hold a ~1 GB working set. Every Magic query evicts pages it just loaded. With burstable CPU credits draining and EBS reads competing for I/O bandwidth, queries balloon past nginx's 120 s `proxy_read_timeout`. That's the timeout problem.
+**The original timeout (now fixed):** the first design flat-scanned the ~1 GB float index on every query. On `t4g.micro` (1 GB RAM) that working set doesn't fit in page cache, so each query re-read it from EBS; with burstable CPU credits draining and EBS bandwidth contention, queries blew past nginx's 120 s `proxy_read_timeout`. Even `t4g.small` (2 GB) eventually timed out once the archive grew past ~500k clues and the full DB reached ~3.7 GB, crowding the index out of cache.
 
-On `t4g.small` (2 GB RAM), the index fits in page cache with comfortable headroom. After the first query (which the `lifespan` pre-warm absorbs), every subsequent Magic call is memory-bandwidth-bound (~100–500 ms for the KNN) plus the OpenAI round-trip. No more timeouts.
+**Binary quantization** removed that I/O: the per-query working set dropped from ~1 GB to ~35 MB (bit index) + ~2 MB (rerank vectors), which stays resident on any instance with room to spare. Recall vs an exact scan stays ≈0.96 (top-100) to ≈0.99 (top-10). After the `lifespan` pre-warm, Magic is local-compute-bound (well under a second) plus the OpenAI round-trip — no more timeouts, and `t4g.small` now has comfortable headroom.
 
-Tune Magic I/O in prod without redeploying: `curl ".../api/search/magic?q=...&limit=10000"` and watch `rows_scanned` in the JSON plus `magic_search` log lines (`backend=subset_scan` vs `vec0_full`). Lower `limit` until latency is acceptable, then decide whether to raise the default (`JANSWER_MAGIC_SCAN_LIMIT`) or re-embed with smaller vectors.
+Tune in prod without redeploying by raising/lowering `JANSWER_MAGIC_RERANK_POOL` in `/etc/janswer.env` (higher = better recall, more rerank reads). Watch `magic_search` log lines (`backend=bit_hamming_rerank`, `embed_ms` / `knn_ms` / `rerank_ms`) via `journalctl -u janswer-api`.
 
 If you outgrow even `t4g.small` (multiple concurrent users hammering Magic), the next steps in order are:
 

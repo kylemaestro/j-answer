@@ -20,6 +20,29 @@ import numpy as np
 EMBEDDING_MODEL = "text-embedding-3-small"
 EMBEDDING_DIMENSIONS = 512
 EMBEDDING_BYTES = EMBEDDING_DIMENSIONS * struct.calcsize("<f")
+# Binary-quantized form: one sign bit per dimension, packed MSB-first.
+# 512 dims -> 64 bytes (vs 2048 for float32). Used by clue_vec_index (bit[])
+# for a fast hamming-distance candidate scan; float blobs above are kept for
+# exact cosine reranking of the candidates.
+EMBEDDING_BIT_BYTES = EMBEDDING_DIMENSIONS // 8
+
+
+def embedding_to_bit_blob(vector: list[float] | np.ndarray) -> bytes:
+    """
+    Binary-quantize an embedding to a packed bit BLOB for sqlite-vec ``bit[]``.
+
+    Each dimension contributes one bit: 1 where the component is > 0, else 0,
+    packed MSB-first via ``np.packbits``. The exact same packing must be used
+    for both indexed clue vectors and query vectors so hamming distances line
+    up. Returns ``EMBEDDING_BIT_BYTES`` bytes.
+    """
+    arr = np.asarray(vector, dtype=np.float32)
+    if arr.shape != (EMBEDDING_DIMENSIONS,):
+        raise ValueError(
+            f"expected shape ({EMBEDDING_DIMENSIONS},), got {arr.shape}"
+        )
+    bits = (arr > 0).astype(np.uint8)
+    return np.packbits(bits).tobytes()
 
 CLUE_EMBEDDINGS_DDL = """
 CREATE TABLE clue_embeddings (

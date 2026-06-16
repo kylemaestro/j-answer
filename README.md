@@ -233,12 +233,12 @@ python scripts/migrate_vec_index.py --db j-answer.db
 - **Tables:** `clue_embeddings` (`clue_id` → `clues.id`, `ON DELETE CASCADE`, `embedding` BLOB) and `clue_vec_index` (`vec0`, cosine KNN).
 - **Does not modify** the `clues` table.
 - **Per-clue text embedded:** `game_category | clue_text | answer_text` (same string shape at query time for search).
-- **Storage:** `text-embedding-3-small`, **512** dimensions, raw **float32** little-endian bytes (~2 KB per clue). Details: `src/embeddings.py`.
-- **Scale:** a full archive is on the order of **~1 GB** of vectors plus OpenAI token charges; use `--limit` to validate first.
+- **Storage:** `text-embedding-3-small`, **512** dimensions, raw **float32** little-endian bytes (~2 KB per clue) in `clue_embeddings`, plus a **binary-quantized** `bit[512]` copy (~64 B per clue) in `clue_vec_index` for fast hamming KNN. Details: `src/embeddings.py`, `src/vec_index.py`.
+- **Scale:** a full archive is on the order of **~1 GB** of float vectors (used only for reranking a small candidate pool) plus a **~35 MB** bit index (scanned per query); use `--limit` to validate first.
 
 The web UI **Magic** mode calls `/api/search/magic` (cosine similarity + score threshold). **Exact** mode keeps FTS tag search unchanged.
 
-**Search-time API usage:** Clue vectors are stored in `clue_embeddings` and indexed in `clue_vec_index`. Each Magic search calls OpenAI **once** to embed the query, then scores up to **`limit` embedding rows** (default 50k) via a bounded read + numpy cosine, or a full **sqlite-vec** flat KNN when `limit` ≥ the vec index size. Tune `limit` (or `JANSWER_MAGIC_SCAN_LIMIT`) on I/O-bound hosts before re-embedding or moving KNN off-box.
+**Search-time API usage:** Clue vectors are stored full-precision in `clue_embeddings` and **binary-quantized** (one sign bit per dimension, `bit[512]`) in `clue_vec_index`. Each Magic search calls OpenAI **once** to embed the query, runs a fast **hamming-distance** KNN over the ~35 MB bit index to pick a candidate pool (`JANSWER_MAGIC_RERANK_POOL`, default 1000), then **reranks** those candidates with exact float32 cosine read by id from `clue_embeddings`. This avoids the ~1 GB full-precision scan that previously made Magic search I/O-bound (and timed out on small EC2 instances) while keeping recall ≈0.96–0.99 vs an exact scan. The `limit`/`JANSWER_MAGIC_SCAN_LIMIT` knob is retained for API compatibility but no longer caps I/O.
 
 **Future enhancement:** **local query embedding** so Magic search needs no OpenAI call after the batch job (re-embed clues with the same local model so spaces match).
 
