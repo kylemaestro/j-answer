@@ -7,6 +7,7 @@ import logging
 import os
 import sqlite3
 from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import AsyncIterator, Dict, List, Optional
 
@@ -34,6 +35,33 @@ _DEFAULT_DB = _REPO_ROOT / "j-answer.db"
 
 def _db_path() -> str:
     return os.environ.get("JANSWER_DB", str(_DEFAULT_DB))
+
+
+def _seattle_today() -> date:
+    """Today's calendar date in Seattle (Pacific). Falls back to a fixed -08:00
+    offset if the tz database isn't available (e.g. Windows without tzdata)."""
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz: timezone | object = ZoneInfo("America/Los_Angeles")
+    except Exception:
+        tz = timezone(timedelta(hours=-8))
+    return datetime.now(tz).date()  # type: ignore[arg-type]
+
+
+# Daily Double clue columns mirror /api/random-clue so row_to_clue_dict works.
+_CLUE_SELECT = """
+  id,
+  jarchive_game_id,
+  air_date,
+  round,
+  game_category,
+  value_display,
+  value_amount,
+  is_daily_double,
+  clue_text,
+  answer_text
+"""
 
 
 def _cors_origins() -> List[str]:
@@ -142,6 +170,57 @@ def random_clue() -> dict:
         raise HTTPException(
             status_code=404,
             detail="No clues in the database yet. Scrape some games first.",
+        )
+
+    return row_to_clue_dict(row)
+
+
+@app.get("/api/daily-double")
+def daily_double() -> dict:
+    """
+    The Daily Double of the day — one ``is_daily_double`` clue chosen
+    deterministically from the Seattle calendar date, so every visitor on the
+    same Seattle day sees the same one. Only ever returns daily-double clues.
+
+    The date seeds a per-day permutation key ``(id * a + b) % M``; taking the
+    minimum picks a single, stable row in one filtered scan (no count needed).
+    """
+    path = _db_path()
+    if not Path(path).is_file():
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database file not found at {path!r}. Run the scraper first or set JANSWER_DB.",
+        )
+
+    seed = _seattle_today().toordinal()
+    a = seed * 2 + 1  # odd multiplier keeps the mapping well-spread
+    b = seed
+    modulus = 2147483647  # 2**31 - 1, a Mersenne prime
+
+    conn = connect(path)
+    try:
+        row = conn.execute(
+            f"""
+            SELECT {_CLUE_SELECT}
+            FROM clues
+            WHERE is_daily_double = 1
+            ORDER BY ((id * ? + ?) % ?)
+            LIMIT 1
+            """,
+            (a, b, modulus),
+        ).fetchone()
+    except sqlite3.OperationalError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database error: {e}. Ensure the schema exists (run the CLI once).",
+        ) from e
+    finally:
+        conn.close()
+
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No Daily Double clues in the database yet. Scrape some games first.",
         )
 
     return row_to_clue_dict(row)

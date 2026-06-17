@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    font-family: "ITC Korinna", "Korinna", "Crete Round", Georgia, serif;
+  }
+}
+
 @layer utilities {
   .backface-hidden {
     backface-visibility: hidden;
@@ -14,5 +20,51 @@
       0 1px 0 rgba(0, 0, 0, 0.9),
       0 2px 4px rgba(0, 0, 0, 0.65),
       0 4px 14px rgba(0, 0, 0, 0.45);
+  }
+
+  .text-gold {
+    color: #f0c24a;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.85),
+      0 2px 5px rgba(0, 0, 0, 0.55),
+      0 0 18px rgba(240, 194, 74, 0.35);
+  }
+}
+
+/* Snappy Persona-5-style letter pop — each letter punches up, overshoots,
+   and snaps back hard, then rests. Fast travel across letters. */
+@keyframes wave-snap {
+  0%,
+  48%,
+  100% {
+    transform: translateY(0) scaleY(1);
+  }
+  8% {
+    transform: translateY(-0.5em) scaleY(1.14);
+  }
+  18% {
+    transform: translateY(0.05em) scaleY(0.94);
+  }
+  26% {
+    transform: translateY(0) scaleY(1);
+  }
+}
+
+.wave-letter {
+  display: inline-block;
+  animation: wave-snap 1.6s cubic-bezier(0.16, 1.2, 0.3, 1) infinite;
+  animation-delay: calc(var(--wave-i) * 0.035s);
+  will-change: transform;
+}
+
+/* One-shot variant — plays through a single time (used for the tagline and
+   the card's DAILY DOUBLE, re-triggered by remounting via a changing key). */
+.wave-once {
+  animation-iteration-count: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wave-letter {
+    animation: none;
   }
 }

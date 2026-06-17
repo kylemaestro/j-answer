@@ -3,10 +3,14 @@ export default {
   content: ["./index.html", "./src/**/*.{js,ts,jsx,tsx}"],
   theme: {
     extend: {
+      fontFamily: {
+        korinna: ['"ITC Korinna"', '"Korinna"', '"Crete Round"', 'Georgia', 'serif'],
+      },
       colors: {
         jeopardy: {
           board: "#030f7d",
         },
+        gold: "#f0c24a",
       },
       boxShadow: {
         "clue-glow":
