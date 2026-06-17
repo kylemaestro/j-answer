@@ -93,6 +93,3 @@ infra/              # CloudFormation template (EC2 + EIP + optional Route 53)
 | 4 | AI categorization (batch LLM taxonomy into `ai_category`) | planned |
 | 5 | Smarter search (semantic KNN; local query embeddings, hybrid with FTS) | in progress |
 | 6 | Statistics and taxonomy UI (hierarchy, counts, "study this bucket") | planned |
-
-Principles: iterate in phases; keep scraping and persistence separate from the
-UI; respect J-Archive rate limits; keep interactions snappy and mobile-friendly.
