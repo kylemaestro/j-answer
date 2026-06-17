@@ -96,7 +96,7 @@ export function SearchPanel({
   luckyLoading,
   onResults,
 }: SearchPanelProps) {
-  const [mode, setMode] = useState<SearchMode>("exact");
+  const [mode, setMode] = useState<SearchMode>("magic");
   const [input, setInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
   const [magicQuery, setMagicQuery] = useState("");
@@ -232,19 +232,19 @@ export function SearchPanel({
           >
             <button
               type="button"
-              aria-pressed={mode === "exact"}
-              onClick={() => setSearchMode("exact")}
-              className={segBtn(mode === "exact")}
-            >
-              Exact
-            </button>
-            <button
-              type="button"
               aria-pressed={mode === "magic"}
               onClick={() => setSearchMode("magic")}
               className={segBtn(mode === "magic")}
             >
               Magic
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "exact"}
+              onClick={() => setSearchMode("exact")}
+              className={segBtn(mode === "exact")}
+            >
+              Exact
             </button>
           </div>
         </div>

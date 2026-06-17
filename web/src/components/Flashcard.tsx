@@ -5,7 +5,11 @@ import { WaveText } from "./WaveText";
 const MAX_TILT = 16;
 
 function formatValue(c: RandomClue): string {
-  if (c.is_daily_double) return "DAILY DOUBLE";
+  if (c.is_daily_double) {
+    return c.value_amount != null
+      ? `DAILY DOUBLE — $${c.value_amount.toLocaleString()}`
+      : "DAILY DOUBLE";
+  }
   if (c.value_display) return c.value_display;
   if (c.value_amount != null) return `$${c.value_amount}`;
   return "";

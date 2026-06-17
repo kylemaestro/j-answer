@@ -1,22 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="j-answer">
-  <defs>
-    <linearGradient id="board" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#0a1ea6" />
-      <stop offset="1" stop-color="#030f7d" />
-    </linearGradient>
-    <linearGradient id="gold" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffe08a" />
-      <stop offset="0.5" stop-color="#f0c24a" />
-      <stop offset="1" stop-color="#cf9a2c" />
-    </linearGradient>
-  </defs>
-  <rect x="2" y="2" width="60" height="60" rx="13" fill="url(#board)" stroke="#ffffff" stroke-opacity="0.18" stroke-width="2" />
-  <rect x="2" y="2" width="60" height="30" rx="13" fill="#ffffff" fill-opacity="0.06" />
-  <g transform="rotate(-9 32 33)">
-    <text x="29" y="46" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif"
-          font-size="44" font-weight="700" font-style="italic" fill="url(#gold)"
-          stroke="#7a5310" stroke-width="0.8" stroke-opacity="0.5">J</text>
-    <rect x="40" y="16" width="6.5" height="20" rx="3" fill="url(#gold)" stroke="#7a5310" stroke-width="0.6" stroke-opacity="0.5" />
-    <circle cx="43.2" cy="43" r="3.6" fill="url(#gold)" stroke="#7a5310" stroke-width="0.6" stroke-opacity="0.5" />
-  </g>
+  <rect width="64" height="64" rx="12" fill="#030f7d" />
+  <text x="18" y="48" font-family="Georgia, 'Times New Roman', serif"
+        font-size="46" font-weight="700" font-style="italic" fill="#ffffff">J</text>
 </svg>

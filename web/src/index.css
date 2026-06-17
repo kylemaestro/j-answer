@@ -51,8 +51,8 @@
   will-change: transform;
 }
 
-/* One-shot variant — plays through a single time (used for the tagline,
-   re-triggered by remounting via a changing key). */
+/* One-shot variant — plays through a single time (used for the tagline and
+   the card's DAILY DOUBLE, re-triggered by remounting via a changing key). */
 .wave-once {
   animation-iteration-count: 1;
 }
