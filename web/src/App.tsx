@@ -65,7 +65,7 @@ export default function App() {
           key={taglineReplay}
           once
           segments={TAGLINE_SEGMENTS}
-          className="block select-none text-balance text-xl font-black uppercase tracking-[0.12em] text-gold sm:text-2xl"
+          className="block select-none whitespace-nowrap text-balance text-lg font-black uppercase tracking-[0.08em] text-gold sm:text-2xl sm:tracking-[0.12em]"
         />
       </header>
 

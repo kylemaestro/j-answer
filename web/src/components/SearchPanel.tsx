@@ -143,6 +143,15 @@ export function SearchPanel({
 
   const clearTags = useCallback(() => setTags([]), []);
 
+  const handleLucky = useCallback(() => {
+    setMagicQuery("");
+    setInput("");
+    setTags([]);
+    setResults([]);
+    setError(null);
+    onLucky();
+  }, [onLucky]);
+
   useEffect(() => {
     if (mode !== "exact") return;
     if (tags.length === 0) {
@@ -191,17 +200,10 @@ export function SearchPanel({
           setError(e instanceof Error ? e.message : "Search failed");
         })
         .finally(() => setLoading(false));
-    }, 400);
+    }, 550);
 
     return () => window.clearTimeout(t);
   }, [mode, magicQ, magicMinScore]);
-
-  const resultCount = results.length;
-  const showResultSummary =
-    !loading &&
-    !error &&
-    ((mode === "exact" && tags.length > 0) ||
-      (mode === "magic" && magicQ.length > 0));
 
   const segBtn = (active: boolean) =>
     `min-h-9 rounded-lg px-4 text-sm font-bold uppercase tracking-wide transition ${
@@ -219,7 +221,7 @@ export function SearchPanel({
         <div className="flex flex-wrap items-center justify-center gap-3">
           <button
             type="button"
-            onClick={onLucky}
+            onClick={handleLucky}
             disabled={luckyLoading}
             className="inline-flex h-11 items-center rounded-xl border-2 border-white/80 bg-white/15 px-5 text-sm font-bold uppercase tracking-wide text-clue shadow-clue-glow transition hover:bg-white/25 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
           >
@@ -257,6 +259,7 @@ export function SearchPanel({
             onSubmit={(e) => {
               e.preventDefault();
               addTag(input);
+              e.currentTarget.querySelector("input")?.blur();
             }}
           >
             <label className="sr-only" htmlFor="search-input">
@@ -311,7 +314,13 @@ export function SearchPanel({
           ) : null}
         </>
       ) : (
-        <form className="flex flex-col" onSubmit={(e) => e.preventDefault()}>
+        <form
+          className="flex flex-col"
+          onSubmit={(e) => {
+            e.preventDefault();
+            e.currentTarget.querySelector("input")?.blur();
+          }}
+        >
           <label className="sr-only" htmlFor="magic-search-input">
             Magic search
           </label>
@@ -351,14 +360,6 @@ export function SearchPanel({
           role="alert"
         >
           {error}
-        </p>
-      ) : null}
-
-      {showResultSummary ? (
-        <p className="mt-3 text-center text-sm text-white/70 text-clue">
-          {resultCount} match{resultCount === 1 ? "" : "es"}
-          {mode === "magic" ? ` with score ≥ ${magicMinScore.toFixed(2)}` : ""} —
-          tap a row to load the card
         </p>
       ) : null}
 
