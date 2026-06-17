@@ -1,72 +1,98 @@
-# Deploy built frontend + Python app to a single EC2 host over SSH.
+# Deploy to the j-answer prod EC2 box on every push to master.
 #
-# Required GitHub repository secrets:
-#   DEPLOY_HOST       — public IP or DNS (e.g. Elastic IP)
-#   DEPLOY_USER       — e.g. ec2-user (AL2023)
-#   DEPLOY_SSH_KEY    — full private PEM (ed25519 or RSA) for key auth; store only deploy key on server
+# Mechanism: the box is a git checkout of this repo. We don't push files —
+# we tell the box (via SSM Run Command) to `git pull` master and re-run the
+# idempotent bootstrap script, which reinstalls deps, rebuilds the frontend,
+# and restarts + health-checks janswer-api. No SSH key required.
 #
-# First-time server: follow docs/aws.md (venv, systemd, nginx, TLS).
+# Auth: GitHub OIDC -> AWS IAM role (no long-lived secrets). The role needs
+# ssm:SendCommand / ssm:GetCommandInvocation on the instance, and a trust
+# policy for token.actions.githubusercontent.com scoped to this repo.
+#
+# Required configuration (Settings -> Secrets and variables -> Actions):
+#   Secret  AWS_DEPLOY_ROLE_ARN   arn:aws:iam::806726265517:role/<deploy-role>
+#   Variable AWS_REGION           us-east-1                   (optional; defaults below)
+#   Variable EC2_INSTANCE_ID      i-042a29bead14c4503         (optional; defaults below)
+#
+# NOTE: a clue_vec_index schema/version change needs a manual migration
+# (systemctl stop janswer-api; venv/bin/python app/scripts/migrate_vec_index.py
+# --db /opt/j-answer/data/j-answer.db; start) — ~6 min. This workflow does not
+# run it automatically.
 
 name: Deploy to EC2
 
 on:
   push:
-    branches: [main]
+    branches: [master]
+  workflow_dispatch: {}
 
 concurrency:
   group: deploy-ec2
-  cancel-in-progress: true
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # for OIDC
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+  EC2_INSTANCE_ID: ${{ vars.EC2_INSTANCE_ID || 'i-042a29bead14c4503' }}
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Build frontend
-        working-directory: web
+      - name: Trigger deploy on box via SSM
+        id: send
         run: |
-          npm ci
-          npm run build
-
-      - name: Prepare SSH
-        run: |
-          mkdir -p ~/.ssh
-          echo "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H "${{ secrets.DEPLOY_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null || true
-
-      - name: Rsync app + static site
-        env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          USER: ${{ secrets.DEPLOY_USER }}
-        run: |
-          rsync -avz --delete \
-            -e "ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
-            ./janswer/ ./src/ ./requirements.txt \
-            "${USER}@${HOST}:/opt/j-answer/app/"
-          rsync -avz --delete \
-            -e "ssh -i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new" \
-            ./web/dist/ \
-            "${USER}@${HOST}:/opt/j-answer/web/dist/"
-
-      - name: Install deps and restart API
-        env:
-          HOST: ${{ secrets.DEPLOY_HOST }}
-          USER: ${{ secrets.DEPLOY_USER }}
-        run: |
-          ssh -i "$HOME/.ssh/deploy_key" -o StrictHostKeyChecking=accept-new \
-            "${USER}@${HOST}" << 'REMOTE'
           set -euo pipefail
-          cd /opt/j-answer/app
-          test -d venv || python3 -m venv venv
-          ./venv/bin/pip install --upgrade pip
-          ./venv/bin/pip install -r requirements.txt
-          sudo systemctl restart janswer-api || echo "WARN: janswer-api not installed yet — see docs/aws.md"
-          REMOTE
+          CMD_ID=$(aws ssm send-command \
+            --region "$AWS_REGION" \
+            --instance-ids "$EC2_INSTANCE_ID" \
+            --document-name AWS-RunShellScript \
+            --comment "Deploy ${GITHUB_SHA::7} from GitHub Actions" \
+            --parameters commands='[
+              "set -euo pipefail",
+              "sudo -u ec2-user git -C /opt/j-answer/app fetch --quiet origin master",
+              "sudo -u ec2-user git -C /opt/j-answer/app reset --hard --quiet origin/master",
+              "/opt/j-answer/app/deploy/bootstrap.sh --skip-tls --branch master"
+            ]' \
+            --query 'Command.CommandId' --output text)
+          echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
+          echo "Sent SSM command $CMD_ID"
+
+      - name: Wait for deploy to finish
+        run: |
+          set -euo pipefail
+          CMD_ID="${{ steps.send.outputs.command_id }}"
+          # SSM Run Command can take a few minutes (frontend rebuild on a t4g.small).
+          aws ssm wait command-executed \
+            --region "$AWS_REGION" \
+            --command-id "$CMD_ID" \
+            --instance-id "$EC2_INSTANCE_ID" || true
+
+          STATUS=$(aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$CMD_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query 'Status' --output text)
+
+          echo "::group::SSM stdout"
+          aws ssm get-command-invocation --region "$AWS_REGION" \
+            --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardOutputContent' --output text
+          echo "::endgroup::"
+          echo "::group::SSM stderr"
+          aws ssm get-command-invocation --region "$AWS_REGION" \
+            --command-id "$CMD_ID" --instance-id "$EC2_INSTANCE_ID" \
+            --query 'StandardErrorContent' --output text
+          echo "::endgroup::"
+
+          echo "Deploy status: $STATUS"
+          test "$STATUS" = "Success"
