@@ -15,4 +15,37 @@
       0 2px 4px rgba(0, 0, 0, 0.65),
       0 4px 14px rgba(0, 0, 0, 0.45);
   }
+
+  .text-gold {
+    color: #f0c24a;
+    text-shadow:
+      0 1px 0 rgba(0, 0, 0, 0.85),
+      0 2px 5px rgba(0, 0, 0, 0.55),
+      0 0 18px rgba(240, 194, 74, 0.35);
+  }
+}
+
+/* Retro rising wave for the tagline — each letter lifts in sequence. */
+@keyframes wave-rise {
+  0%,
+  55%,
+  100% {
+    transform: translateY(0);
+  }
+  27% {
+    transform: translateY(-0.34em);
+  }
+}
+
+.wave-letter {
+  display: inline-block;
+  animation: wave-rise 2.8s ease-in-out infinite;
+  animation-delay: calc(var(--wave-i) * 0.055s);
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wave-letter {
+    animation: none;
+  }
 }

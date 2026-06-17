@@ -13,6 +13,7 @@ type ExactSearchResponse = {
 type MagicSearchResponse = {
   mode: string;
   query: string;
+  tags: string[];
   embedded_pool: number;
   count: number;
   clues: RandomClue[];
@@ -50,11 +51,15 @@ async function fetchExactSearch(tags: string[]): Promise<ExactSearchResponse> {
 async function fetchMagicSearch(
   query: string,
   minScore: number,
+  tags: string[],
 ): Promise<MagicSearchResponse> {
   const params = new URLSearchParams({
     q: query,
     min_score: minScore.toFixed(2),
   });
+  for (const t of tags) {
+    params.append("tag", t);
+  }
   const res = await fetch(`/api/search/magic?${params.toString()}`);
   if (!res.ok) throw new Error(await parseError(res));
   return res.json() as Promise<MagicSearchResponse>;
@@ -66,15 +71,31 @@ async function fetchEmbeddingsStatus(): Promise<EmbeddingsStatus> {
   return res.json() as Promise<EmbeddingsStatus>;
 }
 
-const DEFAULT_MIN_CONFIDENCE = 0.45;
-const MIN_CONFIDENCE = 0.2;
-const MAX_CONFIDENCE = 0.85;
+type Exactness = "low" | "default" | "high";
+
+const EXACTNESS_SCORE: Record<Exactness, number> = {
+  low: 0.35,
+  default: 0.45,
+  high: 0.6,
+};
+
+const EXACTNESS_ORDER: { key: Exactness; label: string }[] = [
+  { key: "low", label: "Low" },
+  { key: "default", label: "Default" },
+  { key: "high", label: "High" },
+];
 
 type SearchPanelProps = {
   onSelectClue: (clue: RandomClue) => void;
+  onLucky: () => void;
+  luckyLoading: boolean;
 };
 
-export function SearchPanel({ onSelectClue }: SearchPanelProps) {
+export function SearchPanel({
+  onSelectClue,
+  onLucky,
+  luckyLoading,
+}: SearchPanelProps) {
   const [mode, setMode] = useState<SearchMode>("exact");
   const [input, setInput] = useState("");
   const [tags, setTags] = useState<string[]>([]);
@@ -83,16 +104,13 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [embeddedPool, setEmbeddedPool] = useState<number | null>(null);
-  const [minConfidence, setMinConfidence] = useState(DEFAULT_MIN_CONFIDENCE);
+  const [exactness, setExactness] = useState<Exactness>("default");
+
+  const minConfidence = EXACTNESS_SCORE[exactness];
 
   useEffect(() => {
     void fetchEmbeddingsStatus()
-      .then((s) => {
-        setEmbeddedPool(s.embedded);
-        if (typeof s.min_score === "number" && s.min_score > 0) {
-          setMinConfidence(s.min_score);
-        }
-      })
+      .then((s) => setEmbeddedPool(s.embedded))
       .catch(() => setEmbeddedPool(null));
   }, []);
 
@@ -100,12 +118,6 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
     setMode(next);
     setError(null);
     setResults([]);
-    if (next === "magic") {
-      setTags([]);
-      setInput("");
-    } else {
-      setMagicQuery("");
-    }
   }, []);
 
   const addTag = useCallback((raw: string) => {
@@ -159,7 +171,7 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
     const t = window.setTimeout(() => {
       setLoading(true);
       setError(null);
-      void fetchMagicSearch(q, minConfidence)
+      void fetchMagicSearch(q, minConfidence, tags)
         .then((data) => {
           setResults(data.clues);
           setEmbeddedPool(data.embedded_pool);
@@ -172,7 +184,7 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
     }, 400);
 
     return () => window.clearTimeout(t);
-  }, [mode, magicQuery, minConfidence]);
+  }, [mode, magicQuery, minConfidence, tags]);
 
   const resultCount = results.length;
   const showResultSummary =
@@ -181,40 +193,49 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
     ((mode === "exact" && tags.length > 0) ||
       (mode === "magic" && magicQuery.trim().length > 0));
 
+  const toggleBtn = (active: boolean) =>
+    `min-h-9 rounded-lg px-4 text-xs font-bold uppercase tracking-wide transition ${
+      active
+        ? "bg-white/20 text-clue shadow-sm"
+        : "text-white/70 hover:text-white"
+    }`;
+
   return (
     <section
       className="mx-auto w-full max-w-2xl px-4 pb-6"
       aria-label="Search clues"
     >
-      <div className="mb-4 flex flex-col items-center gap-2">
-        <div
-          className="inline-flex rounded-xl border border-white/25 bg-black/20 p-1"
-          role="group"
-          aria-label="Search mode"
-        >
+      <div className="mb-4 flex flex-col items-center gap-3">
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <div
+            className="inline-flex h-11 items-center rounded-xl border border-white/25 bg-black/20 p-1"
+            role="group"
+            aria-label="Search mode"
+          >
+            <button
+              type="button"
+              aria-pressed={mode === "exact"}
+              onClick={() => setSearchMode("exact")}
+              className={toggleBtn(mode === "exact")}
+            >
+              Exact
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "magic"}
+              onClick={() => setSearchMode("magic")}
+              className={toggleBtn(mode === "magic")}
+            >
+              Magic
+            </button>
+          </div>
           <button
             type="button"
-            aria-pressed={mode === "exact"}
-            onClick={() => setSearchMode("exact")}
-            className={`min-h-9 rounded-lg px-4 text-xs font-bold uppercase tracking-wide transition ${
-              mode === "exact"
-                ? "bg-white/20 text-clue shadow-sm"
-                : "text-white/70 hover:text-white"
-            }`}
+            onClick={onLucky}
+            disabled={luckyLoading}
+            className="inline-flex h-11 items-center rounded-xl border-2 border-white/80 bg-white/15 px-5 text-xs font-bold uppercase tracking-wide text-clue shadow-clue-glow transition hover:bg-white/25 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
           >
-            Exact
-          </button>
-          <button
-            type="button"
-            aria-pressed={mode === "magic"}
-            onClick={() => setSearchMode("magic")}
-            className={`min-h-9 rounded-lg px-4 text-xs font-bold uppercase tracking-wide transition ${
-              mode === "magic"
-                ? "bg-white/20 text-clue shadow-sm"
-                : "text-white/70 hover:text-white"
-            }`}
-          >
-            Magic
+            {luckyLoading ? "Drawing…" : "I'm feeling lucky"}
           </button>
         </div>
         {mode === "magic" && embeddedPool !== null ? (
@@ -228,75 +249,9 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
         ) : null}
       </div>
 
-      {mode === "exact" ? (
-        <>
-          <form
-            className="flex flex-col gap-2 sm:flex-row sm:items-stretch"
-            onSubmit={(e) => {
-              e.preventDefault();
-              addTag(input);
-            }}
-          >
-            <label className="sr-only" htmlFor="search-input">
-              Search term
-            </label>
-            <input
-              id="search-input"
-              type="search"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder='e.g. birds, answer:mallard, year:2019 — Enter to add'
-              className="min-h-11 flex-1 rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
-              autoComplete="off"
-            />
-            <button
-              type="submit"
-              className="min-h-11 shrink-0 rounded-xl border-2 border-white/80 bg-white/15 px-5 text-sm font-bold uppercase tracking-wide text-clue shadow-clue-glow transition hover:bg-white/25"
-            >
-              Add tag
-            </button>
-          </form>
-
-          {tags.length > 0 ? (
-            <div
-              className="mt-3 flex flex-wrap gap-2"
-              role="list"
-              aria-label="Active search tags"
-            >
-              {tags.map((tag, i) => (
-                <span
-                  key={`${tag}-${i}`}
-                  role="listitem"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/35 bg-black/20 py-1 pl-3 pr-1 text-sm font-medium text-clue"
-                >
-                  <span className="max-w-[200px] truncate" title={tag}>
-                    {tag}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeTag(i)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg leading-none text-white/90 transition hover:bg-white/20 hover:text-white"
-                    aria-label={`Remove tag ${tag}`}
-                  >
-                    ×
-                  </button>
-                </span>
-              ))}
-            </div>
-          ) : (
-            <p className="mt-2 text-center text-xs text-white/55 text-clue">
-              Tags use <strong className="text-white/90">AND</strong>. Plain
-              words match clue, answer, or category. Narrow with{" "}
-              <strong className="text-white/90">answer:</strong>,{" "}
-              <strong className="text-white/90">clue:</strong>,{" "}
-              <strong className="text-white/90">category:</strong>, or{" "}
-              <strong className="text-white/90">year:YYYY</strong>.
-            </p>
-          )}
-        </>
-      ) : (
+      {mode === "magic" ? (
         <form
-          className="flex flex-col"
+          className="mb-3 flex flex-col"
           onSubmit={(e) => {
             e.preventDefault();
           }}
@@ -309,39 +264,38 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
             type="search"
             value={magicQuery}
             onChange={(e) => setMagicQuery(e.target.value)}
-            placeholder='Search for anything (e.g. US presidents, Shakespeare, 80s pop music)'
+            placeholder="Search for anything (e.g. US presidents, Shakespeare, 80s pop music)"
             className="min-h-11 w-full rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
             autoComplete="off"
           />
-          <div className="mt-4 px-1">
-            <div className="flex items-center justify-between gap-3 text-xs text-clue">
-              <label htmlFor="magic-confidence" className="font-semibold uppercase tracking-wide text-white/80">
-                Confidence
-              </label>
-              <span className="tabular-nums text-white/90" aria-live="polite">
-                {minConfidence.toFixed(2)}+
-              </span>
+          <div className="mt-4 flex flex-col items-center gap-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-white/80 text-clue">
+              Exactness
+            </span>
+            <div
+              className="inline-flex rounded-xl border border-white/25 bg-black/20 p-1"
+              role="group"
+              aria-label="Magic search exactness"
+            >
+              {EXACTNESS_ORDER.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  aria-pressed={exactness === key}
+                  onClick={() => setExactness(key)}
+                  className={toggleBtn(exactness === key)}
+                  title={`Minimum similarity ${EXACTNESS_SCORE[key].toFixed(2)}`}
+                >
+                  {label}
+                </button>
+              ))}
             </div>
-            <input
-              id="magic-confidence"
-              type="range"
-              min={MIN_CONFIDENCE}
-              max={MAX_CONFIDENCE}
-              step={0.01}
-              value={minConfidence}
-              onChange={(e) => setMinConfidence(Number(e.target.value))}
-              className="mt-2 h-2 w-full cursor-pointer appearance-none rounded-full bg-white/20 accent-white"
-              aria-valuemin={MIN_CONFIDENCE}
-              aria-valuemax={MAX_CONFIDENCE}
-              aria-valuenow={minConfidence}
-              aria-label="Minimum similarity score for Magic search results"
-            />
-            <p className="mt-1.5 text-center text-[0.65rem] text-white/50 text-clue">
+            <p className="text-center text-[0.65rem] text-white/50 text-clue">
               Higher = stricter matches (fewer results)
             </p>
           </div>
           {embeddedPool === 0 ? (
-            <p className="mt-2 text-center text-xs text-amber-200/90 text-clue">
+            <p className="mt-3 text-center text-xs text-amber-200/90 text-clue">
               No embeddings yet — run{" "}
               <code className="rounded bg-black/30 px-1 py-0.5 text-[0.7rem]">
                 embed/vector-embed.py
@@ -352,13 +306,88 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
               </code>{" "}
               to try Magic search on a sample.
             </p>
-          ) : (
-            <p className="mt-2 text-center text-xs text-white/55 text-clue">
-              Describe a topic or vibe; only clues at or above the confidence
-              cutoff are shown.
-            </p>
-          )}
+          ) : null}
         </form>
+      ) : null}
+
+      <form
+        className="flex flex-col gap-2 sm:flex-row sm:items-stretch"
+        onSubmit={(e) => {
+          e.preventDefault();
+          addTag(input);
+        }}
+      >
+        <label className="sr-only" htmlFor="search-input">
+          {mode === "magic" ? "Filter results by tag" : "Search term"}
+        </label>
+        <input
+          id="search-input"
+          type="search"
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          placeholder={
+            mode === "magic"
+              ? "Optional: narrow by tag — e.g. category:opera, year:2019"
+              : "e.g. birds, answer:mallard, year:2019 — Enter to add"
+          }
+          className="min-h-11 flex-1 rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
+          autoComplete="off"
+        />
+        <button
+          type="submit"
+          className="min-h-11 shrink-0 rounded-xl border-2 border-white/80 bg-white/15 px-5 text-sm font-bold uppercase tracking-wide text-clue shadow-clue-glow transition hover:bg-white/25"
+        >
+          Add tag
+        </button>
+      </form>
+
+      {tags.length > 0 ? (
+        <div
+          className="mt-3 flex flex-wrap gap-2"
+          role="list"
+          aria-label="Active search tags"
+        >
+          {tags.map((tag, i) => (
+            <span
+              key={`${tag}-${i}`}
+              role="listitem"
+              className="inline-flex items-center gap-1.5 rounded-full border border-white/35 bg-black/20 py-1 pl-3 pr-1 text-sm font-medium text-clue"
+            >
+              <span className="max-w-[200px] truncate" title={tag}>
+                {tag}
+              </span>
+              <button
+                type="button"
+                onClick={() => removeTag(i)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg leading-none text-white/90 transition hover:bg-white/20 hover:text-white"
+                aria-label={`Remove tag ${tag}`}
+              >
+                ×
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-center text-xs text-white/55 text-clue">
+          {mode === "magic" ? (
+            <>
+              Optional — add tags to filter these results. Every tag must match
+              (<strong className="text-white/90">AND</strong>).{" "}
+            </>
+          ) : (
+            <>
+              Add a tag and press Enter. Results must match{" "}
+              <strong className="text-white/90">every</strong> tag (AND). A plain
+              word matches the clue, answer, or category.{" "}
+            </>
+          )}
+          Prefix to target one field:{" "}
+          <strong className="text-white/90">answer:</strong>,{" "}
+          <strong className="text-white/90">clue:</strong>,{" "}
+          <strong className="text-white/90">category:</strong>, or{" "}
+          <strong className="text-white/90">year:YYYY</strong> — e.g.{" "}
+          <span className="whitespace-nowrap text-white/80">category:opera</span>.
+        </p>
       )}
 
       {loading ? (
@@ -378,17 +407,14 @@ export function SearchPanel({ onSelectClue }: SearchPanelProps) {
       {showResultSummary ? (
         <p className="mt-3 text-center text-xs text-white/70 text-clue">
           {resultCount} match{resultCount === 1 ? "" : "es"}
-          {mode === "magic"
-            ? ` with score ≥ ${minConfidence.toFixed(2)}`
-            : ""}{" "}
-          — tap a row to
-          load the card
+          {mode === "magic" ? ` with score ≥ ${minConfidence.toFixed(2)}` : ""} —
+          tap a row to load the card
         </p>
       ) : null}
 
       {results.length > 0 ? (
         <ul
-          className="mt-3 max-h-[min(45vh,320px)] space-y-2 overflow-y-auto rounded-xl border border-white/15 bg-black/15 p-2"
+          className="mt-3 max-h-[min(45vh,320px)] space-y-2 overflow-y-auto rounded-xl border border-white/15 bg-black/15 p-2 sm:max-h-[min(62vh,560px)]"
           aria-label="Search results"
         >
           {results.map((c) => (

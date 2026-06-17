@@ -19,6 +19,33 @@ async function fetchRandomClue(): Promise<RandomClue> {
   return body as RandomClue;
 }
 
+const TAGLINE = "Don't put your future in jeopardy!";
+
+/** Per-letter rising wave for the retro tagline. Spaces keep their width. */
+function WaveTagline({ text }: { text: string }) {
+  return (
+    <p
+      className="select-none text-balance text-lg font-black uppercase tracking-[0.12em] text-gold sm:text-xl"
+      aria-label={text}
+    >
+      {Array.from(text).map((ch, i) =>
+        ch === " " ? (
+          <span key={i} aria-hidden className="inline-block w-[0.32em]" />
+        ) : (
+          <span
+            key={i}
+            aria-hidden
+            className="wave-letter"
+            style={{ ["--wave-i" as string]: i }}
+          >
+            {ch}
+          </span>
+        ),
+      )}
+    </p>
+  );
+}
+
 export default function App() {
   const [clue, setClue] = useState<RandomClue | null>(null);
   const [loading, setLoading] = useState(false);
@@ -44,32 +71,25 @@ export default function App() {
         <h1 className="text-2xl font-black uppercase tracking-tight text-clue sm:text-3xl">
           j-answer
         </h1>
-        <p className="max-w-md text-sm text-clue opacity-90">
-          Jeopardy flashcards from your archive — exact tag search or magic
-          vibe search, plus random clues.
-        </p>
-        <button
-          type="button"
-          onClick={() => void lucky()}
-          disabled={loading}
-          className="mt-2 rounded-full border-2 border-white/90 bg-white/10 px-8 py-3 text-sm font-bold uppercase tracking-widest text-clue shadow-clue-glow backdrop-blur-sm transition hover:bg-white/20 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
-        >
-          {loading ? "Drawing…" : "I'm feeling lucky"}
-        </button>
+        <WaveTagline text={TAGLINE} />
+      </header>
+
+      <SearchPanel
+        onSelectClue={setClue}
+        onLucky={() => void lucky()}
+        luckyLoading={loading}
+      />
+
+      <main className="flex flex-1 flex-col items-center justify-center px-4 pb-12 pt-2">
+        {clue ? <Flashcard key={clue.id} clue={clue} /> : null}
         {error ? (
           <p
-            className="mt-3 max-w-lg rounded-lg border border-white/30 bg-black/20 px-4 py-2 text-sm text-clue"
+            className="mt-3 max-w-lg rounded-lg border border-white/30 bg-black/20 px-4 py-2 text-center text-sm text-clue"
             role="alert"
           >
             {error}
           </p>
         ) : null}
-      </header>
-
-      <SearchPanel onSelectClue={setClue} />
-
-      <main className="flex flex-1 flex-col items-center justify-center px-4 pb-16 pt-2">
-        {clue ? <Flashcard clue={clue} /> : null}
         {!clue && !loading && !error ? (
           <p className="max-w-sm text-center text-sm text-clue opacity-80">
             Use <strong className="text-white">search</strong> (Exact or Magic)
@@ -78,6 +98,12 @@ export default function App() {
           </p>
         ) : null}
       </main>
+
+      <footer className="px-4 pb-6 pt-2 text-center">
+        <p className="text-xs font-medium uppercase tracking-[0.18em] text-clue opacity-70">
+          Made with <span className="not-italic">🛸</span> in Seattle
+        </p>
+      </footer>
     </div>
   );
 }

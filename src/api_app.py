@@ -228,6 +228,14 @@ def embeddings_status() -> dict:
 @app.get("/api/search/magic")
 def search_clues_magic(
     q: str = Query(..., min_length=1, description="Natural-language vibe query"),
+    tag: Optional[List[str]] = Query(
+        None,
+        description=(
+            "Optional tag pre-filter (AND). Same syntax as /api/search: a plain "
+            "word matches clue/answer/category, or prefix with `answer:`, `clue:`, "
+            "`category:`, or `year:YYYY`. Cosine similarity ranks within the match."
+        ),
+    ),
     limit: int = Query(
         magic_scan_limit_default(),
         ge=1,
@@ -262,6 +270,8 @@ def search_clues_magic(
     if not query:
         raise HTTPException(status_code=400, detail="Query must not be empty.")
 
+    tags = normalize_tags(tag or [])
+
     conn = connect(path)
     try:
         # Fast: vec0 keeps a small shadow table, so this is ~ms (a COUNT(*) over
@@ -272,6 +282,7 @@ def search_clues_magic(
             return {
                 "mode": "magic",
                 "query": query,
+                "tags": tags,
                 "embedded_pool": 0,
                 "scan_limit": limit,
                 "rows_scanned": 0,
@@ -286,6 +297,7 @@ def search_clues_magic(
                 query,
                 scan_limit=limit,
                 min_score=min_score,
+                tags=tags,
             )
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
@@ -314,6 +326,7 @@ def search_clues_magic(
     return {
         "mode": "magic",
         "query": query,
+        "tags": tags,
         "embedded_pool": embedded_pool,
         "scan_limit": limit,
         "rows_scanned": rows_scanned,

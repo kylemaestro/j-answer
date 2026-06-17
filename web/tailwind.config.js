@@ -7,6 +7,7 @@ export default {
         jeopardy: {
           board: "#030f7d",
         },
+        gold: "#f0c24a",
       },
       boxShadow: {
         "clue-glow":
