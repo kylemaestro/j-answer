@@ -66,19 +66,21 @@ async function fetchEmbeddingsStatus(): Promise<EmbeddingsStatus> {
   return res.json() as Promise<EmbeddingsStatus>;
 }
 
-type Exactness = "low" | "default" | "high";
+// Magic search similarity floor. Intentionally inclusive by default; the
+// hidden `--specific` flag (stripped from the query) tightens it.
+const MAGIC_MIN_SCORE = 0.35;
+const SPECIFIC_MIN_SCORE = 0.55;
+const SPECIFIC_RE = /(?:^|\s)--specific(?=\s|$)/gi;
 
-const EXACTNESS_SCORE: Record<Exactness, number> = {
-  low: 0.35,
-  default: 0.45,
-  high: 0.6,
-};
-
-const EXACTNESS_ORDER: { key: Exactness; label: string }[] = [
-  { key: "low", label: "Low" },
-  { key: "default", label: "Default" },
-  { key: "high", label: "High" },
-];
+/** Strip the secret `--specific` flag from a Magic query and pick its score floor. */
+function parseMagicQuery(raw: string): { query: string; minScore: number } {
+  const specific = SPECIFIC_RE.test(raw);
+  SPECIFIC_RE.lastIndex = 0; // reset the stateful global regex
+  return {
+    query: raw.replace(SPECIFIC_RE, " ").trim(),
+    minScore: specific ? SPECIFIC_MIN_SCORE : MAGIC_MIN_SCORE,
+  };
+}
 
 type SearchPanelProps = {
   onSelectClue: (clue: RandomClue) => void;
@@ -99,9 +101,8 @@ export function SearchPanel({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [embeddedPool, setEmbeddedPool] = useState<number | null>(null);
-  const [exactness, setExactness] = useState<Exactness>("default");
 
-  const minConfidence = EXACTNESS_SCORE[exactness];
+  const { query: magicQ, minScore: magicMinScore } = parseMagicQuery(magicQuery);
 
   useEffect(() => {
     void fetchEmbeddingsStatus()
@@ -162,8 +163,7 @@ export function SearchPanel({
 
   useEffect(() => {
     if (mode !== "magic") return;
-    const q = magicQuery.trim();
-    if (!q) {
+    if (!magicQ) {
       setResults([]);
       setError(null);
       return;
@@ -172,7 +172,7 @@ export function SearchPanel({
     const t = window.setTimeout(() => {
       setLoading(true);
       setError(null);
-      void fetchMagicSearch(q, minConfidence)
+      void fetchMagicSearch(magicQ, magicMinScore)
         .then((data) => {
           setResults(data.clues);
           setEmbeddedPool(data.embedded_pool);
@@ -185,14 +185,14 @@ export function SearchPanel({
     }, 400);
 
     return () => window.clearTimeout(t);
-  }, [mode, magicQuery, minConfidence]);
+  }, [mode, magicQ, magicMinScore]);
 
   const resultCount = results.length;
   const showResultSummary =
     !loading &&
     !error &&
     ((mode === "exact" && tags.length > 0) ||
-      (mode === "magic" && magicQuery.trim().length > 0));
+      (mode === "magic" && magicQ.length > 0));
 
   const segBtn = (active: boolean) =>
     `min-h-9 rounded-lg px-4 text-xs font-bold uppercase tracking-wide transition ${
@@ -238,26 +238,6 @@ export function SearchPanel({
               Magic
             </button>
           </div>
-          {mode === "magic" ? (
-            <div
-              className="inline-flex h-11 items-center rounded-xl border border-white/25 bg-black/20 p-1"
-              role="group"
-              aria-label="Magic search exactness"
-            >
-              {EXACTNESS_ORDER.map(({ key, label }) => (
-                <button
-                  key={key}
-                  type="button"
-                  aria-pressed={exactness === key}
-                  onClick={() => setExactness(key)}
-                  className={segBtn(exactness === key)}
-                  title={`Minimum similarity ${EXACTNESS_SCORE[key].toFixed(2)}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          ) : null}
         </div>
       </div>
 
@@ -365,7 +345,7 @@ export function SearchPanel({
       {showResultSummary ? (
         <p className="mt-3 text-center text-xs text-white/70 text-clue">
           {resultCount} match{resultCount === 1 ? "" : "es"}
-          {mode === "magic" ? ` with score ≥ ${minConfidence.toFixed(2)}` : ""} —
+          {mode === "magic" ? ` with score ≥ ${magicMinScore.toFixed(2)}` : ""} —
           tap a row to load the card
         </p>
       ) : null}
