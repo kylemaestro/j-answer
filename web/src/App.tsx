@@ -20,7 +20,12 @@ async function fetchClue(path: string): Promise<RandomClue> {
   return body as RandomClue;
 }
 
-const TAGLINE = "Don't put your future in jeopardy!";
+// Tagline split so "your" can be italicized while the wave stays continuous.
+const TAGLINE_SEGMENTS = [
+  { text: "Don't put " },
+  { text: "your", italic: true },
+  { text: " future in jeopardy!" },
+];
 
 type Pending = "lucky" | "daily" | null;
 
@@ -28,6 +33,9 @@ export default function App() {
   const [clue, setClue] = useState<RandomClue | null>(null);
   const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
+  // Bumping this remounts the tagline, replaying its one-shot animation.
+  const [taglineReplay, setTaglineReplay] = useState(0);
+  const replayTagline = useCallback(() => setTaglineReplay((n) => n + 1), []);
 
   const load = useCallback(async (kind: Exclude<Pending, null>, path: string) => {
     setPending(kind);
@@ -54,7 +62,9 @@ export default function App() {
           j-answer
         </h1>
         <WaveText
-          text={TAGLINE}
+          key={taglineReplay}
+          once
+          segments={TAGLINE_SEGMENTS}
           className="block select-none text-balance text-lg font-black uppercase tracking-[0.12em] text-gold sm:text-xl"
         />
       </header>
@@ -63,6 +73,7 @@ export default function App() {
         onSelectClue={setClue}
         onLucky={() => void load("lucky", "/api/random-clue")}
         luckyLoading={pending === "lucky"}
+        onResults={replayTagline}
       />
 
       <main className="flex flex-1 flex-col items-center justify-center px-4 pb-12 pt-2">

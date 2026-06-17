@@ -51,6 +51,12 @@
   will-change: transform;
 }
 
+/* One-shot variant — plays through a single time (used for the tagline,
+   re-triggered by remounting via a changing key). */
+.wave-once {
+  animation-iteration-count: 1;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .wave-letter {
     animation: none;

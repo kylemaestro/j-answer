@@ -86,12 +86,15 @@ type SearchPanelProps = {
   onSelectClue: (clue: RandomClue) => void;
   onLucky: () => void;
   luckyLoading: boolean;
+  /** Fired when a search returns at least one result (used to replay the tagline). */
+  onResults?: () => void;
 };
 
 export function SearchPanel({
   onSelectClue,
   onLucky,
   luckyLoading,
+  onResults,
 }: SearchPanelProps) {
   const [mode, setMode] = useState<SearchMode>("exact");
   const [input, setInput] = useState("");
@@ -138,6 +141,8 @@ export function SearchPanel({
     setTags((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
+  const clearTags = useCallback(() => setTags([]), []);
+
   useEffect(() => {
     if (mode !== "exact") return;
     if (tags.length === 0) {
@@ -150,7 +155,10 @@ export function SearchPanel({
       setLoading(true);
       setError(null);
       void fetchExactSearch(tags)
-        .then((data) => setResults(data.clues))
+        .then((data) => {
+          setResults(data.clues);
+          if (data.clues.length > 0) onResults?.();
+        })
         .catch((e) => {
           setResults([]);
           setError(e instanceof Error ? e.message : "Search failed");
@@ -176,6 +184,7 @@ export function SearchPanel({
         .then((data) => {
           setResults(data.clues);
           setEmbeddedPool(data.embedded_pool);
+          if (data.clues.length > 0) onResults?.();
         })
         .catch((e) => {
           setResults([]);
@@ -258,7 +267,7 @@ export function SearchPanel({
               type="search"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="e.g. birds, answer:mallard, category:opera, clue:river, year:2019 — Enter to add"
+              placeholder="e.g. birds, answer:mallard, category:opera, clue:river, year:2019"
               className="min-h-11 flex-1 rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
               autoComplete="off"
             />
@@ -271,30 +280,39 @@ export function SearchPanel({
           </form>
 
           {tags.length > 0 ? (
-            <div
-              className="mt-3 flex flex-wrap gap-2"
-              role="list"
-              aria-label="Active search tags"
-            >
-              {tags.map((tag, i) => (
-                <span
-                  key={`${tag}-${i}`}
-                  role="listitem"
-                  className="inline-flex items-center gap-1.5 rounded-full border border-white/35 bg-black/20 py-1 pl-3 pr-1 text-sm font-medium text-clue"
-                >
-                  <span className="max-w-[200px] truncate" title={tag}>
-                    {tag}
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => removeTag(i)}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-lg leading-none text-white/90 transition hover:bg-white/20 hover:text-white"
-                    aria-label={`Remove tag ${tag}`}
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <div
+                className="flex flex-wrap gap-2"
+                role="list"
+                aria-label="Active search tags"
+              >
+                {tags.map((tag, i) => (
+                  <span
+                    key={`${tag}-${i}`}
+                    role="listitem"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-white/25 bg-black/20 py-1 pl-3 pr-1 text-sm font-medium text-clue"
                   >
-                    ×
-                  </button>
-                </span>
-              ))}
+                    <span className="max-w-[200px] truncate" title={tag}>
+                      {tag}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeTag(i)}
+                      className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-lg leading-none text-white/80 transition hover:bg-white/15 hover:text-white"
+                      aria-label={`Remove tag ${tag}`}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={clearTags}
+                className="inline-flex h-9 items-center rounded-xl border border-white/25 bg-black/20 px-3 text-xs font-bold uppercase tracking-wide text-clue transition hover:bg-white/10"
+              >
+                Clear tags
+              </button>
             </div>
           ) : null}
         </>
@@ -352,7 +370,7 @@ export function SearchPanel({
 
       {results.length > 0 ? (
         <ul
-          className="mt-3 max-h-[min(45vh,320px)] space-y-2 overflow-y-auto rounded-xl border border-white/15 bg-black/15 p-2 sm:max-h-[min(62vh,560px)]"
+          className="mt-3 max-h-[min(45vh,320px)] space-y-2 overflow-y-auto rounded-xl border border-white/15 bg-black/15 p-2 sm:max-h-[min(53vh,476px)]"
           aria-label="Search results"
         >
           {results.map((c) => (
