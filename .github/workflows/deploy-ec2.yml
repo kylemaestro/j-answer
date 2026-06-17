@@ -61,7 +61,7 @@ jobs:
               "set -euo pipefail",
               "sudo -u ec2-user git -C /opt/j-answer/app fetch --quiet origin master",
               "sudo -u ec2-user git -C /opt/j-answer/app reset --hard --quiet origin/master",
-              "/opt/j-answer/app/deploy/bootstrap.sh --skip-tls --branch master"
+              "bash /opt/j-answer/app/deploy/bootstrap.sh --skip-tls --branch master"
             ]' \
             --query 'Command.CommandId' --output text)
           echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
