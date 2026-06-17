@@ -25,22 +25,29 @@
   }
 }
 
-/* Retro rising wave for the tagline — each letter lifts in sequence. */
-@keyframes wave-rise {
+/* Snappy Persona-5-style letter pop — each letter punches up, overshoots,
+   and snaps back hard, then rests. Fast travel across letters. */
+@keyframes wave-snap {
   0%,
-  55%,
+  48%,
   100% {
-    transform: translateY(0);
+    transform: translateY(0) scaleY(1);
   }
-  27% {
-    transform: translateY(-0.34em);
+  8% {
+    transform: translateY(-0.5em) scaleY(1.14);
+  }
+  18% {
+    transform: translateY(0.05em) scaleY(0.94);
+  }
+  26% {
+    transform: translateY(0) scaleY(1);
   }
 }
 
 .wave-letter {
   display: inline-block;
-  animation: wave-rise 2.8s ease-in-out infinite;
-  animation-delay: calc(var(--wave-i) * 0.055s);
+  animation: wave-snap 1.6s cubic-bezier(0.16, 1.2, 0.3, 1) infinite;
+  animation-delay: calc(var(--wave-i) * 0.035s);
   will-change: transform;
 }
 

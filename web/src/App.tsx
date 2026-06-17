@@ -1,10 +1,11 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Flashcard } from "./components/Flashcard";
 import { SearchPanel } from "./components/SearchPanel";
+import { WaveText } from "./components/WaveText";
 import type { RandomClue } from "./types";
 
-async function fetchRandomClue(): Promise<RandomClue> {
-  const res = await fetch("/api/random-clue");
+async function fetchClue(path: string): Promise<RandomClue> {
+  const res = await fetch(path);
   const body: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     const detail =
@@ -21,49 +22,30 @@ async function fetchRandomClue(): Promise<RandomClue> {
 
 const TAGLINE = "Don't put your future in jeopardy!";
 
-/** Per-letter rising wave for the retro tagline. Spaces keep their width. */
-function WaveTagline({ text }: { text: string }) {
-  return (
-    <p
-      className="select-none text-balance text-lg font-black uppercase tracking-[0.12em] text-gold sm:text-xl"
-      aria-label={text}
-    >
-      {Array.from(text).map((ch, i) =>
-        ch === " " ? (
-          <span key={i} aria-hidden className="inline-block w-[0.32em]" />
-        ) : (
-          <span
-            key={i}
-            aria-hidden
-            className="wave-letter"
-            style={{ ["--wave-i" as string]: i }}
-          >
-            {ch}
-          </span>
-        ),
-      )}
-    </p>
-  );
-}
+type Pending = "lucky" | "daily" | null;
 
 export default function App() {
   const [clue, setClue] = useState<RandomClue | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [pending, setPending] = useState<Pending>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const lucky = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (kind: Exclude<Pending, null>, path: string) => {
+    setPending(kind);
     setError(null);
     try {
-      const c = await fetchRandomClue();
-      setClue(c);
+      setClue(await fetchClue(path));
     } catch (e) {
       setClue(null);
       setError(e instanceof Error ? e.message : "Something went wrong");
     } finally {
-      setLoading(false);
+      setPending(null);
     }
   }, []);
+
+  // Greet visitors with the Daily Double of the day.
+  useEffect(() => {
+    void load("daily", "/api/daily-double");
+  }, [load]);
 
   return (
     <div className="flex min-h-screen flex-col bg-[#030f7d]">
@@ -71,13 +53,16 @@ export default function App() {
         <h1 className="text-2xl font-black uppercase tracking-tight text-clue sm:text-3xl">
           j-answer
         </h1>
-        <WaveTagline text={TAGLINE} />
+        <WaveText
+          text={TAGLINE}
+          className="block select-none text-balance text-lg font-black uppercase tracking-[0.12em] text-gold sm:text-xl"
+        />
       </header>
 
       <SearchPanel
         onSelectClue={setClue}
-        onLucky={() => void lucky()}
-        luckyLoading={loading}
+        onLucky={() => void load("lucky", "/api/random-clue")}
+        luckyLoading={pending === "lucky"}
       />
 
       <main className="flex flex-1 flex-col items-center justify-center px-4 pb-12 pt-2">
@@ -88,13 +73,6 @@ export default function App() {
             role="alert"
           >
             {error}
-          </p>
-        ) : null}
-        {!clue && !loading && !error ? (
-          <p className="max-w-sm text-center text-sm text-clue opacity-80">
-            Use <strong className="text-white">search</strong> (Exact or Magic)
-            or <strong className="text-white">I&apos;m feeling lucky</strong> to
-            load a clue.
           </p>
         ) : null}
       </main>

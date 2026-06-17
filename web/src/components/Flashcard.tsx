@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { RandomClue } from "../types";
+import { WaveText } from "./WaveText";
 
 const MAX_TILT = 16;
 
@@ -91,7 +92,16 @@ export function Flashcard({ clue }: FlashcardProps) {
                 </span>
               </div>
               {valueLine ? (
-                <div className="text-right text-base font-bold">{valueLine}</div>
+                clue.is_daily_double ? (
+                  <WaveText
+                    text={valueLine}
+                    className="block text-right text-base font-black uppercase tracking-wide text-gold"
+                  />
+                ) : (
+                  <div className="text-right text-base font-bold">
+                    {valueLine}
+                  </div>
+                )
               ) : null}
             </div>
             <div className="flex flex-1 items-center justify-center px-6 py-6 text-center">

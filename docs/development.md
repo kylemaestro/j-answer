@@ -79,16 +79,19 @@ same origin (nginx). See `docs/aws.md`.
 | ------ | ---- | ------- |
 | `GET` | `/api/health` | Liveness check. |
 | `GET` | `/api/random-clue` | One random clue. |
+| `GET` | `/api/daily-double` | The Daily Double of the day — a deterministic `is_daily_double` clue seeded by the Seattle calendar date (stable for all visitors that day). |
 | `GET` | `/api/search?tag=a&tag=b` | Exact FTS5 search; repeat `tag` for each term (AND). Prefix to narrow: `answer:`, `clue:`, `category:`, `year:`. Optional `limit` (1–500, default 100). |
-| `GET` | `/api/search/magic?q=...` | Magic semantic search. Requires `OPENAI_API_KEY`. Optional `min_score`; optional `tag` (repeatable) pre-filters candidates with the same syntax as `/api/search` (cosine ranks within the match). `limit` is retained for compatibility but no longer caps I/O (see `docs/search.md`). |
+| `GET` | `/api/search/magic?q=...` | Magic semantic search. Requires `OPENAI_API_KEY`. Optional `min_score`; `limit` is retained for compatibility but no longer caps I/O (see `docs/search.md`). |
 | `GET` | `/api/embeddings/status` | `embedded`, `vec_indexed`, and `magic_available`. |
 
 ## Using the UI
 
 - **Search** — toggle Exact (tags + FTS5) or Magic (natural-language search with
-  a Low/Default/High exactness toggle for minimum similarity). Magic also accepts
-  optional tags to narrow the semantic results. Magic requires embeddings in the
-  DB and `OPENAI_API_KEY` on the API. Tap a result row to open that clue.
+  a Low/Default/High exactness toggle for minimum similarity). Magic requires
+  embeddings in the DB and `OPENAI_API_KEY` on the API. Tap a result row to open
+  that clue.
 - **I'm feeling lucky** — loads a random clue.
+- **Daily Double!** — loads the Daily Double of the day (same for everyone on a
+  given Seattle date).
 - **Card** — click/tap to flip between clue and answer (Enter / Space when
   focused).

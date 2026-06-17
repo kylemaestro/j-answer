@@ -17,7 +17,7 @@ from src.embeddings import (
     blob_to_embedding,
     embedding_to_bit_blob,
 )
-from src.search import normalize_tags, row_to_clue_dict, search_clues_by_tags
+from src.search import row_to_clue_dict
 from src.vec_index import (
     VEC_INDEX_VERSION,
     VEC_TABLE,
@@ -39,10 +39,6 @@ DEFAULT_SCAN_LIMIT = 50_000
 # rescore. ~1000 keeps recall high while reading <2 MB of float vectors.
 DEFAULT_RERANK_POOL = 1000
 RERANK_POOL_CAP = 8000
-# When tags narrow a Magic query, the FTS tag match defines the candidate set
-# (cosine only ranks within it), so we can afford a larger pool than the hamming
-# path. Each 512-d float vector is ~2 KB, so 8000 is a bounded ~16 MB read.
-TAG_FILTER_POOL_CAP = 8000
 
 _openai_singleton: openai.OpenAI | None = None
 
@@ -409,23 +405,6 @@ def embed_query(text: str) -> np.ndarray:
     return vec
 
 
-def _tag_filter_candidate_ids(
-    conn: sqlite3.Connection, tags: list[str]
-) -> list[int] | None:
-    """
-    Clue IDs matching all ``tags`` (AND) via the FTS tag search, or ``None`` if
-    no usable tags were given. An empty list means the tags exclude everything.
-
-    Raises ValueError for malformed field filters (e.g. ``year:`` with no year),
-    matching the exact-search contract.
-    """
-    norm = normalize_tags(tags)
-    if not norm:
-        return None
-    rows = search_clues_by_tags(conn, norm, limit=TAG_FILTER_POOL_CAP)
-    return [int(r["id"]) for r in rows]
-
-
 def search_clues_by_vibe(
     conn: sqlite3.Connection,
     db_path: str,
@@ -433,7 +412,6 @@ def search_clues_by_vibe(
     *,
     scan_limit: int | None = None,
     min_score: float | None = None,
-    tags: list[str] | None = None,
 ) -> tuple[list[tuple[dict[str, Any], float]], int]:
     """
     Binary-quantized KNN with exact float reranking.
@@ -443,11 +421,6 @@ def search_clues_by_vibe(
     using the float vectors in ``clue_embeddings``. The bit index is small enough
     (~35 MB) to stay in page cache, so this avoids the ~1 GB float read that
     timed out on small instances.
-
-    When ``tags`` are supplied they act as a hard pre-filter: the FTS tag match
-    (same syntax as exact search — ``answer:``, ``clue:``, ``category:``,
-    ``year:YYYY``) defines the candidate set, and cosine similarity only ranks
-    *within* it. This lets a user say "presidents, but only from category:opera".
 
     ``scan_limit`` is accepted for API compatibility but no longer bounds I/O
     (the whole bit index is scanned cheaply); the candidate pool size is set by
@@ -459,12 +432,6 @@ def search_clues_by_vibe(
         min_score = magic_min_score()
     result_limit = magic_result_limit()
     rerank_pool = magic_rerank_pool()
-
-    # Resolve the tag filter up front: a ValueError here (bad field filter)
-    # should surface before we spend an OpenAI embed call on the query.
-    tag_filter_ids = _tag_filter_candidate_ids(conn, tags or [])
-    if tag_filter_ids is not None and not tag_filter_ids:
-        return [], 0  # tags matched nothing — no point embedding the query
 
     if not vec_index_ready(conn):
         # No vec index. Distinguish "no embeddings at all" (empty result) from
@@ -486,16 +453,10 @@ def search_clues_by_vibe(
     t_embed_start = time.perf_counter()
     query_vec = embed_query(query)
     embed_ms = (time.perf_counter() - t_embed_start) * 1000.0
+    query_bit_blob = embedding_to_bit_blob(query_vec)
 
     t_knn_start = time.perf_counter()
-    if tag_filter_ids is not None:
-        # Tags define the candidate set; cosine ranks within it.
-        candidate_ids = tag_filter_ids
-        backend = "tag_filter_rerank"
-    else:
-        query_bit_blob = embedding_to_bit_blob(query_vec)
-        candidate_ids = _hamming_candidates(conn, query_bit_blob, pool)
-        backend = "bit_hamming_rerank"
+    candidate_ids = _hamming_candidates(conn, query_bit_blob, pool)
     knn_ms = (time.perf_counter() - t_knn_start) * 1000.0
 
     t_rerank_start = time.perf_counter()
@@ -508,11 +469,10 @@ def search_clues_by_vibe(
     )
     rerank_ms = (time.perf_counter() - t_rerank_start) * 1000.0
     log.info(
-        "magic_search ok query_chars=%s backend=%s "
+        "magic_search ok query_chars=%s backend=bit_hamming_rerank "
         "rerank_pool=%s candidates=%s result_limit=%s "
         "embed_ms=%.1f knn_ms=%.1f rerank_ms=%.1f hits=%s",
         len(query.strip()),
-        backend,
         pool,
         len(candidate_ids),
         result_limit,
