@@ -58,14 +58,14 @@ export default function App() {
   return (
     <div className="flex min-h-screen flex-col bg-[#030f7d]">
       <header className="flex flex-col items-center gap-2 px-4 pb-2 pt-10 text-center sm:pt-14">
-        <h1 className="text-2xl font-black uppercase tracking-tight text-clue sm:text-3xl">
+        <h1 className="text-3xl font-black uppercase tracking-tight text-clue sm:text-4xl">
           j-answer
         </h1>
         <WaveText
           key={taglineReplay}
           once
           segments={TAGLINE_SEGMENTS}
-          className="block select-none text-balance text-lg font-black uppercase tracking-[0.12em] text-gold sm:text-xl"
+          className="block select-none text-balance text-xl font-black uppercase tracking-[0.12em] text-gold sm:text-2xl"
         />
       </header>
 
@@ -80,7 +80,7 @@ export default function App() {
         {clue ? <Flashcard key={clue.id} clue={clue} /> : null}
         {error ? (
           <p
-            className="mt-3 max-w-lg rounded-lg border border-white/30 bg-black/20 px-4 py-2 text-center text-sm text-clue"
+            className="mt-3 max-w-lg rounded-lg border border-white/30 bg-black/20 px-4 py-2 text-center text-base text-clue"
             role="alert"
           >
             {error}
@@ -89,7 +89,7 @@ export default function App() {
       </main>
 
       <footer className="px-4 pb-6 pt-2 text-center">
-        <p className="text-xs font-medium uppercase tracking-[0.18em] text-clue opacity-70">
+        <p className="text-sm font-medium uppercase tracking-[0.18em] text-clue opacity-70">
           Made with <span className="not-italic">🛸</span> in Seattle
         </p>
       </footer>

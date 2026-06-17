@@ -64,7 +64,7 @@ export function Flashcard({ clue }: FlashcardProps) {
         }}
       >
         <div
-          className="relative h-[min(52vh,380px)] w-full cursor-pointer rounded-2xl [transform-style:preserve-3d] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+          className="grid min-h-[min(52vh,380px)] w-full cursor-pointer rounded-2xl [transform-style:preserve-3d] focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
           style={{
             transform: flipped ? "rotateY(180deg)" : "rotateY(0deg)",
             transition:
@@ -83,10 +83,10 @@ export function Flashcard({ clue }: FlashcardProps) {
         >
           {/* Front — clue */}
           <div
-            className="backface-hidden absolute inset-0 flex flex-col overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-b from-white/10 to-black/20 shadow-[0_20px_50px_rgba(0,0,0,0.35)]"
+            className="backface-hidden [grid-area:1/1] flex flex-col overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-b from-white/10 to-black/20 shadow-[0_20px_50px_rgba(0,0,0,0.35)]"
             style={{ transform: "rotateY(0deg)" }}
           >
-            <div className="flex shrink-0 flex-col gap-1 border-b border-white/15 px-5 py-3 text-sm font-semibold tracking-wide text-clue">
+            <div className="flex shrink-0 flex-col gap-1 border-b border-white/15 px-5 py-3 text-base font-semibold tracking-wide text-clue">
               <div className="flex w-full items-start justify-between gap-3">
                 <span className="min-w-0 flex-1 text-left uppercase leading-tight">
                   {clue.game_category}
@@ -99,37 +99,37 @@ export function Flashcard({ clue }: FlashcardProps) {
                 clue.is_daily_double ? (
                   <WaveText
                     text={valueLine}
-                    className="block text-right text-base font-black uppercase tracking-wide text-gold"
+                    className="block text-right text-lg font-black uppercase tracking-wide text-gold"
                   />
                 ) : (
-                  <div className="text-right text-base font-bold">
+                  <div className="text-right text-lg font-bold">
                     {valueLine}
                   </div>
                 )
               ) : null}
             </div>
             <div className="flex flex-1 items-center justify-center px-6 py-6 text-center">
-              <p className="text-balance text-2xl font-semibold leading-snug text-clue sm:text-3xl">
+              <p className="text-balance text-3xl font-semibold leading-snug text-clue sm:text-4xl">
                 {clue.clue_text}
               </p>
             </div>
-            <p className="pb-3 text-center text-xs text-white/60 text-clue">
+            <p className="pb-3 text-center text-sm text-white/60 text-clue">
               Tap to reveal the answer
             </p>
           </div>
 
           {/* Back — answer */}
           <div
-            className="backface-hidden absolute inset-0 flex flex-col items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-b from-black/25 to-white/5 px-6 py-8 shadow-[0_20px_50px_rgba(0,0,0,0.35)]"
+            className="backface-hidden [grid-area:1/1] flex flex-col items-center justify-center overflow-hidden rounded-2xl border border-white/20 bg-gradient-to-b from-black/25 to-white/5 px-6 py-8 shadow-[0_20px_50px_rgba(0,0,0,0.35)]"
             style={{ transform: "rotateY(180deg)" }}
           >
-            <p className="mb-2 text-xs font-bold uppercase tracking-[0.2em] text-clue opacity-80">
+            <p className="mb-2 text-sm font-bold uppercase tracking-[0.2em] text-clue opacity-80">
               What is…
             </p>
-            <p className="text-center text-2xl font-bold leading-snug text-clue sm:text-3xl">
+            <p className="text-center text-3xl font-bold leading-snug text-clue sm:text-4xl">
               {clue.answer_text}
             </p>
-            <p className="mt-6 text-center text-xs text-white/55 text-clue">
+            <p className="mt-6 text-center text-sm text-white/55 text-clue">
               Tap to see the clue again
             </p>
           </div>

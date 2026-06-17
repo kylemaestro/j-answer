@@ -2,6 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  body {
+    font-family: "ITC Korinna", "Korinna", "Crete Round", Georgia, serif;
+  }
+}
+
 @layer utilities {
   .backface-hidden {
     backface-visibility: hidden;

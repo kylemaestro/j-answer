@@ -204,7 +204,7 @@ export function SearchPanel({
       (mode === "magic" && magicQ.length > 0));
 
   const segBtn = (active: boolean) =>
-    `min-h-9 rounded-lg px-4 text-xs font-bold uppercase tracking-wide transition ${
+    `min-h-9 rounded-lg px-4 text-sm font-bold uppercase tracking-wide transition ${
       active
         ? "bg-white/20 text-clue shadow-sm"
         : "text-white/70 hover:text-white"
@@ -221,7 +221,7 @@ export function SearchPanel({
             type="button"
             onClick={onLucky}
             disabled={luckyLoading}
-            className="inline-flex h-11 items-center rounded-xl border-2 border-white/80 bg-white/15 px-5 text-xs font-bold uppercase tracking-wide text-clue shadow-clue-glow transition hover:bg-white/25 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
+            className="inline-flex h-11 items-center rounded-xl border-2 border-white/80 bg-white/15 px-5 text-sm font-bold uppercase tracking-wide text-clue shadow-clue-glow transition hover:bg-white/25 active:scale-[0.98] disabled:cursor-wait disabled:opacity-70"
           >
             {luckyLoading ? "Drawing…" : "I'm feeling lucky"}
           </button>
@@ -267,16 +267,10 @@ export function SearchPanel({
               type="search"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="e.g. birds, answer:mallard, category:opera, clue:river, year:2019"
-              className="min-h-11 flex-1 rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
+              placeholder="Search with tags like: birds, answer:star wars, category:russian literature, clue:river, year:2019"
+              className="min-h-11 flex-1 rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-base text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
               autoComplete="off"
             />
-            <button
-              type="submit"
-              className="min-h-11 shrink-0 rounded-xl border-2 border-white/80 bg-white/15 px-5 text-sm font-bold uppercase tracking-wide text-clue shadow-clue-glow transition hover:bg-white/25"
-            >
-              Add tag
-            </button>
           </form>
 
           {tags.length > 0 ? (
@@ -290,7 +284,7 @@ export function SearchPanel({
                   <span
                     key={`${tag}-${i}`}
                     role="listitem"
-                    className="inline-flex items-center gap-1.5 rounded-xl border border-white/25 bg-black/20 py-1 pl-3 pr-1 text-sm font-medium text-clue"
+                    className="inline-flex items-center gap-1.5 rounded-xl border border-white/25 bg-black/20 py-1 pl-3 pr-1 text-base font-medium text-clue"
                   >
                     <span className="max-w-[200px] truncate" title={tag}>
                       {tag}
@@ -309,7 +303,7 @@ export function SearchPanel({
               <button
                 type="button"
                 onClick={clearTags}
-                className="inline-flex h-9 items-center rounded-xl border border-white/25 bg-black/20 px-3 text-xs font-bold uppercase tracking-wide text-clue transition hover:bg-white/10"
+                className="inline-flex h-9 items-center rounded-xl border border-white/25 bg-black/20 px-3 text-sm font-bold uppercase tracking-wide text-clue transition hover:bg-white/10"
               >
                 Clear tags
               </button>
@@ -326,12 +320,12 @@ export function SearchPanel({
             type="search"
             value={magicQuery}
             onChange={(e) => setMagicQuery(e.target.value)}
-            placeholder="Search for anything (e.g. US presidents, Shakespeare, 80s pop music)"
-            className="min-h-11 w-full rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-sm text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
+            placeholder="Search for anything (e.g. US presidents, 80s pop music, 19th century American landscape artists"
+            className="min-h-11 w-full rounded-xl border border-white/25 bg-white/[0.075] px-4 py-2 text-base text-white placeholder:text-white/45 outline-none ring-white/30 focus:border-white/50 focus:ring-2"
             autoComplete="off"
           />
           {embeddedPool === 0 ? (
-            <p className="mt-2 text-center text-xs text-amber-200/90 text-clue">
+            <p className="mt-2 text-center text-sm text-amber-200/90 text-clue">
               No embeddings yet — run{" "}
               <code className="rounded bg-black/30 px-1 py-0.5 text-[0.7rem]">
                 embed/vector-embed.py
@@ -347,13 +341,13 @@ export function SearchPanel({
       )}
 
       {loading ? (
-        <p className="mt-4 text-center text-sm text-clue opacity-80">
+        <p className="mt-4 text-center text-base text-clue opacity-80">
           Searching…
         </p>
       ) : null}
       {error ? (
         <p
-          className="mt-4 rounded-lg border border-white/30 bg-black/25 px-3 py-2 text-center text-sm text-clue"
+          className="mt-4 rounded-lg border border-white/30 bg-black/25 px-3 py-2 text-center text-base text-clue"
           role="alert"
         >
           {error}
@@ -361,7 +355,7 @@ export function SearchPanel({
       ) : null}
 
       {showResultSummary ? (
-        <p className="mt-3 text-center text-xs text-white/70 text-clue">
+        <p className="mt-3 text-center text-sm text-white/70 text-clue">
           {resultCount} match{resultCount === 1 ? "" : "es"}
           {mode === "magic" ? ` with score ≥ ${magicMinScore.toFixed(2)}` : ""} —
           tap a row to load the card
@@ -380,7 +374,7 @@ export function SearchPanel({
                 onClick={() => onSelectClue(c)}
                 className="w-full rounded-lg border border-transparent px-3 py-2.5 text-left transition hover:border-white/25 hover:bg-white/10"
               >
-                <div className="flex flex-wrap items-baseline justify-between gap-2 text-xs font-semibold uppercase tracking-wide text-clue opacity-90">
+                <div className="flex flex-wrap items-baseline justify-between gap-2 text-sm font-semibold uppercase tracking-wide text-clue opacity-90">
                   <span className="min-w-0 flex-1 truncate">
                     {c.game_category}
                   </span>
@@ -396,7 +390,7 @@ export function SearchPanel({
                     <span>{c.year ?? c.air_date.slice(0, 4)}</span>
                   </span>
                 </div>
-                <p className="mt-1 line-clamp-2 text-sm leading-snug text-clue">
+                <p className="mt-1 line-clamp-2 text-base leading-snug text-clue">
                   {c.clue_text}
                 </p>
               </button>
